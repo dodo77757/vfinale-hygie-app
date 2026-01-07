@@ -1,13 +1,13 @@
-// "Point d'entrée principal de l'application React."
-import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
-import { UserProfile, WorkoutPlan, PerformanceMetric, GoalProgressEntry, Achievement, SessionRecord } from './types';
+// Point d'entrée principal de l'application React
+import { Toaster, toast } from 'sonner';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import { UserProfile, WorkoutPlan, PerformanceMetric, GoalProgressEntry, Achievement, SessionRecord, PlannedSession } from './types';
 import * as aiService from './services/geminiService';
 import { StorageService } from './services/storageService';
 import { extractReps, calculateSuggestedWeight, updatePR } from './services/weightCalculationService';
 import { generateMultiWeekProgram, generateProgramWorkout, markSessionCompleted } from './services/programmingService';
 import { CoachClientView } from './components/CoachClientView';
 import { WorkoutEditor } from './components/WorkoutEditor';
-import { ToastContainer } from './components/Toast';
 import { SwapExerciseModal } from './components/modals/SwapExerciseModal';
 import { AssessmentModal } from './components/modals/AssessmentModal';
 import { CreateProgramModal } from './components/modals/CreateProgramModal';
@@ -42,7 +42,6 @@ import { useKeyboardShortcuts } from './components/ui/KeyboardShortcuts';
 import { EnhancedAreaChart, EnhancedLineChart } from './components/ui/EnhancedChart';
 import { useDebounce } from './hooks/useDebounce';
 import { areClientsEqual, areProfilesEqual } from './utils/comparisonUtils';
-import { confirmAction } from './utils/confirmDialog';
 import { PerformanceBackground } from './components/shared/PerformanceBackground';
 import { 
   fileToBase64Optimized, 
@@ -51,8 +50,16 @@ import {
   isFileTooLarge,
   formatFileSize
 } from './services/fileProcessingService';
+import { processFileNonBlocking } from './services/nonBlockingFileProcessor';
 import { checkFileDuplicate, checkTextDuplicate } from './utils/fileDuplicateCheck';
-import { notificationService } from './services/notificationService';
+import { CalendarValidationService } from './services/calendarValidationService';
+import { HygieLogo } from './components/HygieLogo';
+import { getDayType, getTodayPlannedSession, getYesterdayMissedSession } from './utils/sessionDetection';
+import { CoachLayout, CoachView } from './src/presentation/components/dashboard/CoachLayout';
+import { CoachCockpitView } from './src/presentation/components/dashboard/CoachCockpitView';
+import { CoachClientsView } from './src/presentation/components/dashboard/CoachClientsView';
+import { CoachLibraryView } from './src/presentation/components/dashboard/CoachLibraryView';
+import { CoachSettingsView } from './src/presentation/components/dashboard/CoachSettingsView';
 
 // "Déclaration globale pour l'interface de sélection de clé API (AIStudio)."
 declare global {
@@ -255,7 +262,12 @@ const CoachClientCard: React.FC<{
 
       {/* Barres de progression - Style joyeux */}
       <div className="space-y-3">
-        {programProgress !== null && client.activeProgram && (
+        {client.programStatus === 'generating' ? (
+          <div className="flex items-center gap-2 p-3 bg-[#FEF3C7] border border-[#FBBF24] rounded-xl">
+            <div className="w-4 h-4 border-2 border-[#F59E0B] border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-xs font-semibold text-[#92400E]">Programme en cours de création...</span>
+          </div>
+        ) : programProgress !== null && client.activeProgram ? (
           <div>
             <div className="flex justify-between items-center mb-1.5">
               <span className="text-xs font-semibold text-[#4B5563] uppercase">Programme</span>
@@ -268,7 +280,7 @@ const CoachClientCard: React.FC<{
               />
             </div>
           </div>
-        )}
+        ) : null}
 
         {client.activeGoal && (
           <div>
@@ -423,9 +435,8 @@ const App: React.FC = () => {
   const [selectedClients, setSelectedClients] = useState<Set<string>>(new Set());
   const [quickViewClient, setQuickViewClient] = useState<UserProfile | null>(null);
   
-  // "--- NAVIGATION MODÉRATEUR (VUES MULTIPLES) ---"
-  type ModeratorView = 'clients' | 'calendar' | 'analytics' | 'exercises' | 'import';
-  const [moderatorView, setModeratorView] = useState<ModeratorView>('clients');
+  // "--- NAVIGATION MODÉRATEUR (NOUVELLE ARCHITECTURE) ---"
+  const [coachView, setCoachView] = useState<CoachView>('cockpit');
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
   const [planSessionModalOpen, setPlanSessionModalOpen] = useState(false);
   
@@ -508,7 +519,7 @@ const App: React.FC = () => {
           });
         } catch (error) {
           console.error("Erreur lors de la sauvegarde automatique:", error);
-      notificationService.error("Erreur lors de la sauvegarde automatique du profil.");
+      toast.error("Erreur lors de la sauvegarde automatique du profil.");
     } finally {
       isSavingRef.current = false;
     }
@@ -533,7 +544,7 @@ const App: React.FC = () => {
       lastSavedClientsRef.current = debouncedClients;
     } catch (error) {
       console.error("Erreur lors de la sauvegarde automatique des clients:", error);
-      notificationService.error("Erreur lors de la sauvegarde automatique des clients.");
+      toast.error("Erreur lors de la sauvegarde automatique des clients.");
     } finally {
       isSavingRef.current = false;
     }
@@ -573,7 +584,7 @@ const App: React.FC = () => {
       setHasApiKey(true);
       } catch (error) {
         console.error("Erreur lors de l'ouverture du dialogue de clé API:", error);
-        notificationService.error("Impossible d'ouvrir le dialogue de sélection de clé API.");
+        toast.error("Impossible d'ouvrir le dialogue de sélection de clé API.");
       }
     }
   };
@@ -608,15 +619,22 @@ const App: React.FC = () => {
   }, []);
 
   const handleClearAllClients = useCallback(() => {
-    confirmAction(
-      "Êtes-vous sûr de vouloir supprimer TOUS les sujets de la base de données ? Cette action est irréversible.",
-      () => {
-      const emptyList = StorageService.clearAllClients();
-      setClients(emptyList);
-      setProfile(null);
-        notificationService.success("Tous les sujets ont été supprimés.");
-    }
-    );
+    toast("Êtes-vous sûr de vouloir supprimer TOUS les sujets de la base de données ? Cette action est irréversible.", {
+      action: {
+        label: "Confirmer",
+        onClick: () => {
+          const emptyList = StorageService.clearAllClients();
+          setClients(emptyList);
+          setProfile(null);
+          toast.success("Tous les sujets ont été supprimés.");
+        }
+      },
+      cancel: {
+        label: "Annuler",
+        onClick: () => {}
+      },
+      duration: Infinity
+    });
   }, []);
 
   // "--- LOGIQUE MÉTIER : WORKOUT & SESSION (PART 1: Fonctions de Fin) ---"
@@ -755,22 +773,30 @@ const App: React.FC = () => {
       if (assessmentFile) {
         // Vérifie la taille du fichier
         if (isFileTooLarge(assessmentFile)) {
-          notificationService.error(`Fichier trop volumineux (${formatFileSize(assessmentFile.size)}). Veuillez utiliser un fichier de moins de 20MB.`);
+          toast.error(`Fichier trop volumineux (${formatFileSize(assessmentFile.size)}). Veuillez utiliser un fichier de moins de 20MB.`);
           setIsTyping(false);
           return;
         }
 
-        setFileProcessingStage('Optimisation du fichier...');
-        const optimizedFile = await optimizeFileForUpload(assessmentFile);
-        
-        setFileProcessingStage('Conversion en Base64...');
-        const base64Raw = await fileToBase64Optimized(optimizedFile, (progress) => {
-          setFileProcessingProgress(Math.min(progress, 50)); // 0-50% pour la conversion
+        setFileProcessingStage('Optimisation du fichier... (5-10s)');
+        const { base64Data, mimeType } = await processFileNonBlocking(assessmentFile, {
+          onOptimizeStart: () => setFileProcessingProgress(10),
+          onOptimizeComplete: () => {
+            setFileProcessingProgress(30);
+            setFileProcessingStage('Conversion en Base64... (3-8s)');
+          },
+          onBase64Progress: (progress) => {
+            setFileProcessingProgress(30 + Math.min(progress * 0.3, 30)); // 30-60%
+          },
+          onBase64Complete: () => {
+            setFileProcessingProgress(60);
+            setFileProcessingStage('Envoi à l\'IA...');
+          },
+          onError: (error) => {
+            toast.error(`Erreur lors du traitement: ${error.message}`);
+            setIsTyping(false);
+          }
         });
-        
-        setFileProcessingStage('Envoi à l\'IA...');
-        const base64Data = base64Raw.split(',')[1];
-        const mimeType = getMimeType(optimizedFile);
         analysisInput = { inlineData: { data: base64Data, mimeType } };
         
         setFileProcessingProgress(60);
@@ -779,7 +805,7 @@ const App: React.FC = () => {
         setFileProcessingProgress(30);
       }
 
-      setFileProcessingStage('Analyse en cours...');
+      setFileProcessingStage('Analyse IA en cours... (10-20s)');
       setFileProcessingProgress(70);
       const analysis = await aiService.parseMedicalAssessment(analysisInput);
       setFileProcessingProgress(100);
@@ -848,9 +874,9 @@ const App: React.FC = () => {
       setAssessmentModalOpen(false);
       setFileProcessingProgress(0);
       setFileProcessingStage('');
-      notificationService.success("Bilan Bio-Métrique intégré avec succès.");
+      toast.success("Bilan Bio-Métrique intégré avec succès.");
     } catch (e) {
-      notificationService.error("Échec de l'analyse du bilan.");
+      toast.error("Échec de l'analyse du bilan.");
     } finally {
       setIsTyping(false);
       setFileProcessingProgress(0);
@@ -874,24 +900,34 @@ const App: React.FC = () => {
             if (file) {
                 // Vérifie la taille du fichier
                 if (isFileTooLarge(file)) {
-                  notificationService.error(`Fichier trop volumineux (${formatFileSize(file.size)}). Veuillez utiliser un fichier de moins de 20MB.`);
+                  toast.error(`Fichier trop volumineux (${formatFileSize(file.size)}). Veuillez utiliser un fichier de moins de 20MB.`);
                   setIsTyping(false);
                   setFileProcessingProgress(0);
                   setFileProcessingStage('');
                   throw new Error('Fichier trop volumineux');
                 }
 
-                setFileProcessingStage('Optimisation du fichier...');
-                const optimizedFile = await optimizeFileForUpload(file);
-                
-                setFileProcessingStage('Conversion en Base64...');
-                const base64Raw = await fileToBase64Optimized(optimizedFile, (progress) => {
-                  setFileProcessingProgress(Math.min(progress, 50));
+                setFileProcessingStage('Optimisation du fichier... (5-10s)');
+                const { base64Data, mimeType } = await processFileNonBlocking(file, {
+                  onOptimizeStart: () => setFileProcessingProgress(10),
+                  onOptimizeComplete: () => {
+                    setFileProcessingProgress(30);
+                    setFileProcessingStage('Conversion en Base64... (3-8s)');
+                  },
+                  onBase64Progress: (progress) => {
+                    setFileProcessingProgress(30 + Math.min(progress * 0.3, 30)); // 30-60%
+                  },
+                  onBase64Complete: () => {
+                    setFileProcessingProgress(60);
+                    setFileProcessingStage('Envoi à l\'IA...');
+                  },
+                  onError: (error) => {
+                    toast.error(`Erreur lors du traitement: ${error.message}`);
+                    setIsTyping(false);
+                    setFileProcessingProgress(0);
+                    setFileProcessingStage('');
+                  }
                 });
-                
-                setFileProcessingStage('Envoi à l\'IA...');
-                const base64Data = base64Raw.split(',')[1];
-                const mimeType = getMimeType(optimizedFile);
                 analysisInput = { inlineData: { data: base64Data, mimeType } };
                 rawAssessment = `Fichier: ${file.name}`;
                 setFileProcessingProgress(60);
@@ -901,7 +937,7 @@ const App: React.FC = () => {
                 setFileProcessingProgress(30);
             }
             
-            setFileProcessingStage('Analyse en cours...');
+            setFileProcessingStage('Analyse IA en cours... (10-20s)');
             setFileProcessingProgress(70);
             
             // Ajout d'un timeout pour éviter que l'application reste bloquée
@@ -924,9 +960,9 @@ const App: React.FC = () => {
                                     analysisError?.message?.includes('RESOURCE_EXHAUSTED');
                 
                 if (isQuotaError) {
-                    notificationService.error("Quota API Gemini épuisé. Le client sera créé avec des valeurs par défaut. Veuillez attendre ou vérifier votre quota API.");
+                    toast.error("Quota API Gemini épuisé. Le client sera créé avec des valeurs par défaut. Veuillez attendre ou vérifier votre quota API.");
                 } else {
-                    notificationService.warning(`L'analyse automatique a échoué (${analysisError.message || 'Erreur inconnue'}). Le client sera créé avec des valeurs par défaut.`);
+                    toast.warning(`L'analyse automatique a échoué (${analysisError.message || 'Erreur inconnue'}). Le client sera créé avec des valeurs par défaut.`);
                 }
                 
                 // On continue avec une analyse vide plutôt que de bloquer
@@ -1017,20 +1053,52 @@ const App: React.FC = () => {
             limitations_detectees: analysis?.detected_limitations
         });
 
-        // Génère automatiquement un programme de 24 semaines personnalisé
-        setFileProcessingStage('Création du programme personnalisé...');
-        setFileProcessingProgress(85);
-        const program = await generateMultiWeekProgram(newClient, 24, 3);
-        newClient.activeProgram = program;
-        setFileProcessingProgress(95);
-
-        console.log('Ajout du client au storage...');
+        // Créer le client immédiatement avec programStatus: 'generating'
+        newClient.programStatus = 'generating';
+        
+        console.log('Ajout du client au storage (immédiat)...');
         const newClientsList = StorageService.addClient(newClient);
         console.log('Liste des clients après ajout:', newClientsList.length);
         console.log('Client ajouté trouvé dans la liste:', !!newClientsList.find(c => c.id === newClient.id));
         setClients(newClientsList);
-        setFileProcessingProgress(100);
-        console.log('createNewClientProcess terminé avec succès');
+        
+        // Rendre la main à l'UI immédiatement
+        setIsTyping(false);
+        setFileProcessingProgress(0);
+        setFileProcessingStage('');
+        
+        // Lancer la génération du programme en arrière-plan (non-bloquant)
+        generateMultiWeekProgram(newClient, 24, 3)
+          .then((program) => {
+            // Mettre à jour le client avec le programme généré
+            const updatedClient: UserProfile = {
+              ...newClient,
+              activeProgram: program,
+              programStatus: 'ready'
+            };
+            
+            const updatedClientsList = StorageService.updateClient(updatedClient);
+            setClients(updatedClientsList);
+            
+            toast.success(`Programme personnalisé créé pour ${newClient.nom}`);
+            console.log('Programme généré avec succès pour', newClient.nom);
+          })
+          .catch((error) => {
+            console.error('Erreur lors de la génération du programme:', error);
+            
+            // En cas d'erreur, marquer le statut comme 'none' pour permettre une nouvelle tentative
+            const errorClient: UserProfile = {
+              ...newClient,
+              programStatus: 'none'
+            };
+            
+            const errorClientsList = StorageService.updateClient(errorClient);
+            setClients(errorClientsList);
+            
+            toast.error(`Erreur lors de la génération du programme pour ${newClient.nom}. Vous pourrez réessayer plus tard.`);
+          });
+        
+        console.log('createNewClientProcess terminé - client créé, génération en cours...');
         return newClient;
 
      } catch (e) {
@@ -1044,7 +1112,7 @@ const App: React.FC = () => {
 
   const handleCreateClientSubmit = useCallback(async () => {
     if (!newClientName.trim() && !newClientFile) {
-        notificationService.error("Nom ou Fichier requis.");
+        toast.error("Nom ou Fichier requis.");
         return;
     }
     try {
@@ -1053,11 +1121,11 @@ const App: React.FC = () => {
         setNewClientName('');
         setNewClientFile(null);
         setNewClientText('');
-        notificationService.success("Nouveau sujet intégré avec succès.");
+        toast.success("Nouveau sujet intégré avec succès.");
     } catch(e: any) {
-        // L'erreur est déjà gérée dans createNewClientProcess avec notificationService
+        // L'erreur est déjà gérée dans createNewClientProcess avec toast
         if (e.message !== 'Client dupliqué' && e.message !== 'Fichier trop volumineux') {
-          notificationService.error("Erreur lors de la création du client.");
+          toast.error("Erreur lors de la création du client.");
         }
     }
   }, [newClientName, newClientFile, newClientText]);
@@ -1066,7 +1134,7 @@ const App: React.FC = () => {
     console.log('handleDashboardFileSelect appelé', { hasApiKey, files: e.target.files });
     
     if (!hasApiKey) {
-        notificationService.error("Veuillez d'abord configurer votre clé API.");
+        toast.error("Veuillez d'abord configurer votre clé API.");
         return;
     }
     if (e.target.files && e.target.files[0]) {
@@ -1075,7 +1143,7 @@ const App: React.FC = () => {
         
         // Vérifie la taille avant de commencer
         if (isFileTooLarge(file)) {
-            notificationService.error(`Fichier trop volumineux (${formatFileSize(file.size)}). Veuillez utiliser un fichier de moins de 20MB.`);
+            toast.error(`Fichier trop volumineux (${formatFileSize(file.size)}). Veuillez utiliser un fichier de moins de 20MB.`);
             e.target.value = '';
             return;
         }
@@ -1113,9 +1181,9 @@ const App: React.FC = () => {
                                     workoutError?.message?.includes('RESOURCE_EXHAUSTED');
                 
                 if (isQuotaError) {
-                    notificationService.error("Quota API Gemini épuisé. Le client a été créé mais le workout ne peut pas être généré pour le moment. Veuillez attendre ou vérifier votre quota API.");
+                    toast.error("Quota API Gemini épuisé. Le client a été créé mais le workout ne peut pas être généré pour le moment. Veuillez attendre ou vérifier votre quota API.");
                 } else {
-                    notificationService.warning("Client créé mais le workout n'a pas pu être généré. Vous pourrez le générer manuellement.");
+                    toast.warning("Client créé mais le workout n'a pas pu être généré. Vous pourrez le générer manuellement.");
                 }
                 // On continue sans workout - l'utilisateur pourra le générer plus tard
             }
@@ -1126,15 +1194,15 @@ const App: React.FC = () => {
             setStep('DAILY_CHECK');
             
             console.log('Import terminé avec succès');
-            notificationService.success("Client importé avec succès.");
+            toast.success("Client importé avec succès.");
         } catch (err: any) {
             console.error("Erreur lors de l'import du fichier:", err);
             console.error("Type d'erreur:", typeof err);
             console.error("Message:", err?.message);
             console.error("Stack trace:", err?.stack);
-            // L'erreur est déjà gérée dans createNewClientProcess avec notificationService
+            // L'erreur est déjà gérée dans createNewClientProcess avec toast
             if (err.message !== 'Client dupliqué' && err.message !== 'Fichier trop volumineux') {
-              notificationService.error(`Erreur lors de l'import rapide: ${err.message || 'Erreur inconnue'}`);
+              toast.error(`Erreur lors de l'import rapide: ${err.message || 'Erreur inconnue'}`);
             }
         } finally {
             e.target.value = '';
@@ -1148,15 +1216,78 @@ const App: React.FC = () => {
 
   // "--- LOGIQUE MÉTIER : START & EXECUTION SÉANCE ---"
 
-  const handleStartWorkout = useCallback(async () => {
+  const handleStartWorkout = useCallback(async (plannedSession?: PlannedSession, isFreeSession: boolean = false) => {
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2cfb4929-d2fb-4807-9ccf-fd780957ec5c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:700',message:'handleStartWorkout called',data:{profileExists:!!profile,profileId:profile?.id,profileName:profile?.nom,hasActiveProgram:!!profile?.activeProgram},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7242/ingest/2cfb4929-d2fb-4807-9ccf-fd780957ec5c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:700',message:'handleStartWorkout called',data:{profileExists:!!profile,profileId:profile?.id,profileName:profile?.nom,hasActiveProgram:!!profile?.activeProgram,hasPlannedSession:!!plannedSession,isFreeSession},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
     // #endregion
     if (!profile) {
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/2cfb4929-d2fb-4807-9ccf-fd780957ec5c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:702',message:'handleStartWorkout early return - profile is null',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
       // #endregion
       return;
+    }
+
+    // Vérifier si le programme est prêt (sauf pour les séances libres)
+    if (!isFreeSession && !plannedSession?.workoutPlan && profile.programStatus !== 'ready') {
+      if (profile.programStatus === 'generating') {
+        toast.info('Le programme est en cours de création. Veuillez patienter...');
+      } else {
+        toast.warning('Aucun programme disponible. Veuillez créer un programme d\'abord.');
+      }
+      return;
+    }
+
+    // Si une séance planifiée est fournie, vérifier si elle a un workoutPlan
+    // Si oui, l'utiliser directement (pas de vérification de contrainte car c'est la séance planifiée)
+    if (plannedSession) {
+      // Si la séance planifiée a déjà un workoutPlan, l'utiliser directement
+      if (plannedSession.workoutPlan) {
+        setIsTyping(true);
+        try {
+          setWorkout(plannedSession.workoutPlan);
+          
+          // En mode coach, on peut directement éditer
+          if (userRole === 'COACH') {
+            setIsTyping(false);
+            setWorkoutEditorOpen(true);
+            return;
+          }
+          
+          setStep('WARMUP');
+          setCurrentPhaseIndex(0);
+          setCountdown(plannedSession.workoutPlan.echauffement_dynamique[0]?.duree_secondes || 10);
+          setIsTimerRunning(true);
+          
+          // Initialise le poids suggéré pour le premier exercice
+          if (plannedSession.workoutPlan.liste_exos.length > 0 && profile) {
+            const firstExo = plannedSession.workoutPlan.liste_exos[0];
+            const targetReps = extractReps(firstExo.reps);
+            const suggestedWeight = calculateSuggestedWeight(profile, firstExo, targetReps);
+            setCurrentKg(suggestedWeight);
+          }
+        } catch (e) {
+          toast.error("Erreur lors du chargement de la séance planifiée.");
+        } finally {
+          setIsTyping(false);
+        }
+        return;
+      }
+      
+      // Si la séance planifiée n'a pas de workoutPlan, on doit la générer
+      // Mais on ne vérifie pas la contrainte car c'est la séance planifiée qu'on veut lancer
+      // On continue avec la génération normale ci-dessous
+    }
+
+    // Pour les séances libres (hors programme), on ne vérifie pas la contrainte hebdomadaire
+    // Si une plannedSession est fournie, on ne vérifie pas non plus car c'est la séance planifiée qu'on veut lancer
+    if (!isFreeSession && !plannedSession) {
+      // Vérifier qu'on ne peut pas faire plus d'une séance par semaine
+      // Seulement si on ne lance pas une séance planifiée
+      const validation = CalendarValidationService.canStartSession(profile, new Date(), true);
+      if (!validation.canStart) {
+        toast.error(validation.reason || 'Impossible de démarrer une nouvelle séance');
+        return;
+      }
     }
     
     // Si un programme actif existe, utilise la séance du programme
@@ -1177,20 +1308,40 @@ const App: React.FC = () => {
           return;
         }
         
+        // Créer une session planifiée dans le calendrier pour aujourd'hui
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const sessionId = `planned_${Date.now()}`;
+        const newPlannedSession = {
+          id: sessionId,
+          date: today.toISOString(),
+          clientId: profile.id,
+          notes: `Séance du programme: ${program.name} - Semaine ${program.currentWeek}, Séance ${program.currentSession}`,
+          isAutoGenerated: false
+        };
+        
+        const updatedProfileWithSession: UserProfile = {
+          ...profile,
+          plannedSessions: [...(profile.plannedSessions || []), newPlannedSession]
+        };
+        const newClientsList = StorageService.updateClient(updatedProfileWithSession);
+        setClients(newClientsList);
+        setProfile(updatedProfileWithSession);
+        
         setStep('WARMUP');
         setCurrentPhaseIndex(0);
         setCountdown(plan.echauffement_dynamique[0]?.duree_secondes || 10);
         setIsTimerRunning(true);
         
         // Initialise le poids suggéré pour le premier exercice
-        if (plan.liste_exos.length > 0 && profile) {
+        if (plan.liste_exos.length > 0 && updatedProfileWithSession) {
           const firstExo = plan.liste_exos[0];
           const targetReps = extractReps(firstExo.reps);
-          const suggestedWeight = calculateSuggestedWeight(profile, firstExo, targetReps);
+          const suggestedWeight = calculateSuggestedWeight(updatedProfileWithSession, firstExo, targetReps);
           setCurrentKg(suggestedWeight);
         }
       } catch (e) {
-        notificationService.error("Erreur génération séance du programme.");
+        toast.error("Erreur génération séance du programme.");
       } finally {
         setIsTyping(false);
       }
@@ -1211,6 +1362,26 @@ const App: React.FC = () => {
       const plan = await generateProgramWorkout(updatedProfile, program, 1, 1);
       setWorkout(plan);
       
+      // Créer une session planifiée dans le calendrier pour aujourd'hui
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const sessionId = `planned_${Date.now()}`;
+      const newPlannedSession = {
+        id: sessionId,
+        date: today.toISOString(),
+        clientId: updatedProfile.id,
+        notes: `Séance du programme: ${program.name} - Semaine 1, Séance 1`,
+        isAutoGenerated: false
+      };
+      
+      const finalProfile: UserProfile = {
+        ...updatedProfile,
+        plannedSessions: [...(updatedProfile.plannedSessions || []), newPlannedSession]
+      };
+      const finalClientsList = StorageService.updateClient(finalProfile);
+      setClients(finalClientsList);
+      setProfile(finalProfile);
+      
       // En mode coach, on peut directement éditer
       if (userRole === 'COACH') {
         setIsTyping(false);
@@ -1224,14 +1395,14 @@ const App: React.FC = () => {
       setIsTimerRunning(true);
       
       // Initialise le poids suggéré pour le premier exercice
-      if (plan.liste_exos.length > 0 && updatedProfile) {
+      if (plan.liste_exos.length > 0 && finalProfile) {
         const firstExo = plan.liste_exos[0];
         const targetReps = extractReps(firstExo.reps);
-        const suggestedWeight = calculateSuggestedWeight(updatedProfile, firstExo, targetReps);
+        const suggestedWeight = calculateSuggestedWeight(finalProfile, firstExo, targetReps);
         setCurrentKg(suggestedWeight);
       }
     } catch (e) {
-      notificationService.error("Erreur génération programme. Vérifiez la clé API.");
+      toast.error("Erreur génération programme. Vérifiez la clé API.");
     } finally {
       setIsTyping(false);
     }
@@ -1239,7 +1410,7 @@ const App: React.FC = () => {
 
   const handleCreateProgram = useCallback(async (name: string, duration: number, sessionsPerWeek: number) => {
     if (!profile || !name.trim()) {
-      notificationService.error("Veuillez entrer un nom pour le programme.");
+      toast.error("Veuillez entrer un nom pour le programme.");
       return;
     }
     
@@ -1252,9 +1423,9 @@ const App: React.FC = () => {
       setProfile(updatedProfile);
       setCreateProgramModalOpen(false);
       setProgramName('');
-      notificationService.success(`Programme "${name}" créé avec succès !`);
+      toast.success(`Programme "${name}" créé avec succès !`);
     } catch (e) {
-      notificationService.error("Erreur lors de la création du programme.");
+      toast.error("Erreur lors de la création du programme.");
     } finally {
       setIsTyping(false);
     }
@@ -1441,15 +1612,43 @@ const App: React.FC = () => {
         setNewAchievements(newAchievementsUnlocked);
       }
       
-      // Supprimer la session planifiée si elle existe (synchronisation avec calendrier)
+      // Marquer la session planifiée comme complétée (synchronisation avec calendrier)
       const todayDate = new Date();
       todayDate.setHours(0, 0, 0, 0);
-      const remainingPlannedSessions = (profile.plannedSessions || []).filter(ps => {
+      
+      const updatedPlannedSessions = (profile.plannedSessions || []).map(ps => {
         const psDate = new Date(ps.date);
         psDate.setHours(0, 0, 0, 0);
-        // Garder les sessions planifiées qui ne sont pas pour aujourd'hui
-        return psDate.getTime() !== todayDate.getTime();
+        
+        // Si c'est la séance d'aujourd'hui, la marquer comme complétée
+        if (psDate.getTime() === todayDate.getTime() && ps.status !== 'completed') {
+          return {
+            ...ps,
+            status: 'completed' as const,
+            completedAt: new Date().toISOString()
+          };
+        }
+        
+        // Si c'est une séance manquée d'hier qu'on rattrape, la marquer aussi comme complétée
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+        if (psDate.getTime() === yesterday.getTime() && ps.status !== 'completed') {
+          return {
+            ...ps,
+            status: 'completed' as const,
+            completedAt: new Date().toISOString()
+          };
+        }
+        
+        return ps;
       });
+      
+      const completedSessionId = updatedPlannedSessions.find(ps => {
+        const psDate = new Date(ps.date);
+        psDate.setHours(0, 0, 0, 0);
+        return (psDate.getTime() === todayDate.getTime() || psDate.getTime() === new Date(todayDate.getTime() - 86400000).getTime()) && ps.status === 'completed';
+      })?.id;
 
       const updatedProfile: UserProfile = {
         ...profile,
@@ -1470,9 +1669,10 @@ const App: React.FC = () => {
           exercices: workout.liste_exos,
           tonnage,
           mood: progressResult.isOnTrack ? 'En progression' : 'Ajustement requis',
-          debrief: aiFeedback + "\n" + progressResult.adjustmentAdvice
+          debrief: aiFeedback + "\n" + progressResult.adjustmentAdvice,
+          plannedSessionId: completedSessionId // Lier à la session planifiée du calendrier
         }],
-        plannedSessions: remainingPlannedSessions, // Supprime la session planifiée d'aujourd'hui
+        plannedSessions: updatedPlannedSessions, // Met à jour le statut de la session planifiée
         activeProgram: updatedProgram,
         achievements: [...(profile.achievements || []), ...newAchievementsUnlocked],
         currentStreak,
@@ -1492,7 +1692,7 @@ const App: React.FC = () => {
       setStep('FINAL');
     } catch (e) {
       console.error(e);
-      notificationService.error("Erreur critique lors de la sauvegarde de la session.");
+      toast.error("Erreur critique lors de la sauvegarde de la session.");
     } finally {
       setIsTyping(false);
     }
@@ -1655,7 +1855,7 @@ const App: React.FC = () => {
   const handleBodyPartClick = useCallback((bodyPart: string) => {
     const muscleNames = BODY_PART_TO_MUSCLES[bodyPart] || [];
     if (muscleNames.length === 0) {
-      notificationService.warning(`Aucun exercice trouvé pour ${bodyPart}`);
+      toast.warning(`Aucun exercice trouvé pour ${bodyPart}`);
       return;
     }
     
@@ -1670,7 +1870,7 @@ const App: React.FC = () => {
     );
     
     if (exercises.length === 0) {
-      notificationService.warning(`Aucun exercice trouvé pour ${bodyPart}`);
+      toast.warning(`Aucun exercice trouvé pour ${bodyPart}`);
       return;
     }
     
@@ -1702,7 +1902,7 @@ const App: React.FC = () => {
 
     const newClientsList = StorageService.addClient(duplicatedClient);
     setClients(newClientsList);
-    notificationService.success(`Client "${client.nom}" dupliqué avec succès`);
+    toast.success(`Client "${client.nom}" dupliqué avec succès`);
   }, []);
 
   // IMPORTANT: Tous les hooks doivent être définis AVANT les returns conditionnels
@@ -1725,7 +1925,7 @@ const App: React.FC = () => {
     }
     
     setWorkoutEditorOpen(false);
-    notificationService.success("Protocole modifié et sauvegardé. Le client verra la version mise à jour.");
+    toast.success("Protocole modifié et sauvegardé. Le client verra la version mise à jour.");
   }, [profile]);
 
   // "--- RENDERERS (AFFICHAGE) ---"
@@ -1734,7 +1934,8 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-[#F0F9FF] via-white to-[#FFFBF0] p-6">
         <div className="w-full max-w-md text-center space-y-8">
-          <div className="space-y-3">
+          <div className="space-y-6 flex flex-col items-center">
+            <HygieLogo size="large" className="mb-4" />
             <h1 className="logo-hygie text-5xl md:text-6xl bg-gradient-to-r from-[#1F2937] to-[#4B5563] bg-clip-text text-transparent">HYGIE</h1>
             <p className="tagline text-sm md:text-base text-[#6B7280]">SPORT. SANTÉ. PERFORMANCE.</p>
           </div>
@@ -1783,440 +1984,166 @@ const App: React.FC = () => {
 
   if (viewMode === 'COACH_DASHBOARD') {
       return (
-          <div className="h-[100dvh] flex flex-col bg-[#f3efe5] overflow-hidden">
-             {/* LOADER IA GLOBAL - Pour l'import de fichiers */}
-             {isTyping && (
-               <div className="fixed inset-0 z-[1000] bg-[#181818]/95 flex flex-col items-center justify-center backdrop-blur-md">
-                  <div className="w-16 h-16 border-4 border-[#007c89] border-t-transparent rounded-full animate-spin mb-6" />
-                  <p className="font-bebas text-2xl text-white tracking-[0.5em] animate-pulse mb-4">
-                    {fileProcessingStage || 'TRAITEMENT EN COURS...'}
-                  </p>
-                  {fileProcessingProgress > 0 && (
-                    <div className="w-64 max-w-xs">
-                      <div className="w-full bg-[#181818] rounded-full h-2 mb-2">
-                        <div 
-                          className="bg-[#007c89] h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${fileProcessingProgress}%` }}
-                        />
-                </div>
-                      <p className="text-xs font-mono text-gray-400 text-center">{fileProcessingProgress}%</p>
+          <>
+            <Toaster position="top-center" richColors />
+            {/* LOADER IA GLOBAL - Pour l'import de fichiers */}
+            {isTyping && (
+              <div className="fixed inset-0 z-[1000] bg-[#181818]/95 flex flex-col items-center justify-center backdrop-blur-md">
+                <div className="w-16 h-16 border-4 border-[#007c89] border-t-transparent rounded-full animate-spin mb-6" />
+                <p className="font-bebas text-2xl text-white tracking-[0.5em] animate-pulse mb-4">
+                  {fileProcessingStage || 'TRAITEMENT EN COURS...'}
+                </p>
+                {fileProcessingProgress > 0 && (
+                  <div className="w-64 max-w-xs">
+                    <div className="w-full bg-[#181818] rounded-full h-2 mb-2">
+                      <div 
+                        className="bg-[#007c89] h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${fileProcessingProgress}%` }}
+                      />
                     </div>
-                  )}
-               </div>
-             )}
-             
-             <header className="h-16 shrink-0 border-b border-[#007c89]/20 flex items-center justify-between px-6 bg-white/80 backdrop-blur-xl z-50 shadow-sm">
-                <h1 className="font-bebas text-xl tracking-[0.2em] text-[#007c89]">HYGIE MODÉRATEUR</h1>
-                
-                {/* Navigation par onglets - Style Hygie */}
-                <div className="flex gap-1 items-center bg-[#f3efe5] rounded-lg p-1 shadow-sm border border-[#007c89]/10">
-                   <button
-                      onClick={() => setModeratorView('clients')}
-                      className={`px-4 py-2 text-sm font-semibold rounded-md transition-all duration-200 font-montserrat ${
-                        moderatorView === 'clients'
-                          ? 'bg-[#007c89] text-white shadow-md'
-                          : 'text-[#181818] hover:bg-[#007c89]/10'
-                      }`}
-                   >
-                      Clients
-                   </button>
-                   <button
-                      onClick={() => setModeratorView('calendar')}
-                      className={`px-4 py-2 text-sm font-semibold rounded-md transition-all duration-200 font-montserrat ${
-                        moderatorView === 'calendar'
-                          ? 'bg-[#007c89] text-white shadow-md'
-                          : 'text-[#181818] hover:bg-[#007c89]/10'
-                      }`}
-                   >
-                      Calendrier
-                   </button>
-                   <button
-                      onClick={() => setModeratorView('analytics')}
-                      className={`px-4 py-2 text-sm font-semibold rounded-md transition-all duration-200 font-montserrat ${
-                        moderatorView === 'analytics'
-                          ? 'bg-[#007c89] text-white shadow-md'
-                          : 'text-[#181818] hover:bg-[#007c89]/10'
-                      }`}
-                   >
-                      Stats
-                   </button>
-                   <button
-                      onClick={() => setModeratorView('exercises')}
-                      className={`px-4 py-2 text-sm font-semibold rounded-md transition-all duration-200 font-montserrat ${
-                        moderatorView === 'exercises'
-                          ? 'bg-[#007c89] text-white shadow-md'
-                          : 'text-[#181818] hover:bg-[#007c89]/10'
-                      }`}
-                   >
-                      Exercices
-                   </button>
-                   <button
-                      onClick={() => setModeratorView('import')}
-                      className={`px-4 py-2 text-sm font-semibold rounded-md transition-all duration-200 font-montserrat ${
-                        moderatorView === 'import'
-                          ? 'bg-[#007c89] text-white shadow-md'
-                          : 'text-[#181818] hover:bg-[#007c89]/10'
-                      }`}
-                   >
-                      Import
-                   </button>
-                </div>
+                    <p className="text-xs font-mono text-gray-400 text-center">{fileProcessingProgress}%</p>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            <CoachLayout
+              currentView={coachView}
+              onViewChange={setCoachView}
+              onLogout={() => setViewMode('LOGIN')}
+              onExportJSON={() => DataExportService.exportToJSON(clients, selectedClients.size > 0 ? selectedClients : undefined)}
+              onExportCSV={() => DataExportService.exportToCSV(clients, selectedClients.size > 0 ? selectedClients : undefined)}
+              onImport={() => importFileInputRef.current?.click()}
+              onClearAll={handleClearAllClients}
+            >
+              {/* Input caché pour l'import JSON */}
+              <input 
+                type="file" 
+                ref={importFileInputRef} 
+                className="hidden" 
+                accept=".json" 
+                onChange={async (e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    try {
+                      const importedClients = await DataExportService.importFromJSON(e.target.files[0]);
+                      const newClients = [...clients, ...importedClients];
+                      setClients(newClients);
+                      StorageService.saveClients(newClients);
+                    } catch (error) {
+                      // Erreur déjà gérée dans le service
+                    }
+                    e.target.value = '';
+                  }
+                }}
+              />
 
-                <div className="flex gap-2 items-center">
-                   <button 
-                      onClick={() => DataExportService.exportToJSON(clients, selectedClients.size > 0 ? selectedClients : undefined)}
-                      className="px-4 py-2 text-xs font-semibold text-[#007c89] bg-white border border-[#007c89]/30 hover:bg-[#007c89] hover:text-white rounded-md transition-all duration-200 shadow-sm hover:shadow-md"
-                      title="Exporter en JSON"
-                   >
-                      JSON
-                   </button>
-                   <button 
-                      onClick={() => DataExportService.exportToCSV(clients, selectedClients.size > 0 ? selectedClients : undefined)}
-                      className="px-4 py-2 text-xs font-semibold text-[#007c89] bg-white border border-[#007c89]/30 hover:bg-[#007c89] hover:text-white rounded-md transition-all duration-200 shadow-sm hover:shadow-md"
-                      title="Exporter en CSV"
-                   >
-                      CSV
-                   </button>
-                   <button 
-                      onClick={() => importFileInputRef.current?.click()}
-                      className="px-4 py-2 text-xs font-semibold text-white bg-[#007c89] hover:bg-[#006a75] rounded-md transition-all duration-200 shadow-sm hover:shadow-md"
-                      title="Importer depuis JSON"
-                   >
-                      Import
-                   </button>
-                   <input 
-                      type="file" 
-                      ref={importFileInputRef} 
-                      className="hidden" 
-                      accept=".json" 
-                      onChange={async (e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          try {
-                            const importedClients = await DataExportService.importFromJSON(e.target.files[0]);
-                            const newClients = [...clients, ...importedClients];
-                            setClients(newClients);
-                            StorageService.saveClients(newClients);
-                          } catch (error) {
-                            // Erreur déjà gérée dans le service
-                          }
-                          e.target.value = '';
+              {/* Contenu selon la vue */}
+              {coachView === 'cockpit' && (
+                <CoachCockpitView
+                  clients={clients}
+                  onClientClick={(client) => {
+                    setQuickViewClient(client);
+                  }}
+                />
+              )}
+
+              {coachView === 'clients' && (
+                <CoachClientsView
+                  clients={clients}
+                  onClientClick={selectProfileAndStart}
+                  onClientEdit={(client) => {
+                    setSelectedClientForEdit(client);
+                    setEditClientModalOpen(true);
+                  }}
+                  onClientAssessment={(client) => {
+                    setSelectedClientForAssessment(client);
+                    setAssessmentModalOpen(true);
+                  }}
+                  onClientQuickView={(client) => {
+                    setQuickViewClient(client);
+                  }}
+                  onClientDuplicate={handleDuplicateClient}
+                  selectedClients={selectedClients}
+                  onToggleSelect={(id) => {
+                    const newSelected = new Set(selectedClients);
+                    if (newSelected.has(id)) {
+                      newSelected.delete(id);
+                    } else {
+                      newSelected.add(id);
+                    }
+                    setSelectedClients(newSelected);
+                  }}
+                  onBatchExport={() => DataExportService.exportToJSON(clients, selectedClients)}
+                  onBatchDelete={() => {
+                    const count = selectedClients.size;
+                    toast(`Supprimer ${count} client(s) ?`, {
+                      action: {
+                        label: "Confirmer",
+                        onClick: () => {
+                          const newClients = clients.filter(c => !selectedClients.has(c.id));
+                          setClients(newClients);
+                          StorageService.saveClients(newClients);
+                          setSelectedClients(new Set());
+                          toast.success(`${count} client(s) supprimé(s)`);
                         }
-                      }}
-                   />
-                    <div className="w-px h-6 bg-[#007c89]/20 mx-1"></div>
-                    <button onClick={handleClearAllClients} className="px-4 py-2 text-xs font-semibold text-white bg-[#EF4444] hover:bg-[#DC2626] rounded-md transition-all duration-200 shadow-sm hover:shadow-md">Supprimer</button>
-                    <button onClick={() => setViewMode('LOGIN')} className="px-4 py-2 text-xs font-semibold text-[#181818] hover:text-[#007c89] transition-all duration-200">Déconnexion</button>
-                </div>
-             </header>
+                      },
+                      cancel: {
+                        label: "Annuler",
+                        onClick: () => {}
+                      },
+                      duration: Infinity
+                    });
+                  }}
+                />
+              )}
 
-             <main className="flex-1 overflow-y-auto custom-scrollbar p-6 relative z-10 bg-[#f3efe5]">
-                <div className="w-full max-w-7xl mx-auto space-y-6 animate-fadeIn">
-                   {/* VUE CLIENTS */}
-                   {moderatorView === 'clients' && (
-                      <>
-                         {/* Barre de recherche et filtres - Style Hygie */}
-                         <div className="p-6 rounded-lg bg-white border border-[#007c89]/20 shadow-md space-y-4">
-                      {/* Barre de recherche - Style Hygie */}
-                      <div className="flex gap-3 items-center">
-                         <div className="flex-1 relative">
-                            <input
-                               type="text"
-                               value={searchQuery}
-                               onChange={(e) => setSearchQuery(e.target.value)}
-                               placeholder="Rechercher un client..."
-                               className="w-full bg-white border border-[#007c89]/30 rounded-md px-4 py-3 pl-11 text-sm text-[#181818] placeholder:text-[#6B7280] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
-                            />
-                            <span className="absolute left-4 top-3.5 text-[#007c89] text-lg">🔍</span>
-                         </div>
-                         {(searchQuery || filterObjective !== 'all' || filterStatus !== 'all' || filterTag !== 'all') && (
-                            <button
-                               onClick={() => {
-                                  setSearchQuery('');
-                                  setFilterObjective('all');
-                                  setFilterStatus('all');
-                                  setFilterTag('all');
-                                  setSortBy('name');
-                               }}
-                               className="px-5 py-3 bg-[#007c89] text-white rounded-md text-sm font-semibold hover:bg-[#006a75] transition-all shadow-sm hover:shadow-md"
-                            >
-                               Réinitialiser
-                            </button>
-                         )}
-                   </div>
+              {coachView === 'calendar' && (
+                <>
+                  <CoachCalendarView
+                    clients={clients}
+                    groups={[]}
+                    onClientClick={(client) => {
+                      setQuickViewClient(client);
+                    }}
+                    onDayClick={(date) => {
+                      setSelectedCalendarDate(date);
+                      setPlanSessionModalOpen(true);
+                    }}
+                    onUpdateClients={(updatedClients) => {
+                      setClients(updatedClients);
+                      StorageService.saveClients(updatedClients);
+                    }}
+                  />
+                  <PlanSessionModal
+                    isOpen={planSessionModalOpen}
+                    onClose={() => {
+                      setPlanSessionModalOpen(false);
+                      setSelectedCalendarDate(null);
+                    }}
+                    selectedDate={selectedCalendarDate}
+                    clients={clients}
+                    onUpdate={(updatedClients) => {
+                      setClients(updatedClients);
+                      StorageService.saveClients(updatedClients);
+                    }}
+                  />
+                </>
+              )}
 
-                      {/* Filtres et tri - Style moderne */}
-                      <div className="flex flex-wrap gap-3 items-center">
-                         {/* Filtre par objectif */}
-                         <select
-                            value={filterObjective}
-                            onChange={(e) => setFilterObjective(e.target.value)}
-                            className="bg-white border border-[#007c89]/30 rounded-md px-3 py-2 text-sm text-[#181818] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
-                         >
-                            <option value="all">Tous les objectifs</option>
-                            {uniqueObjectives.map(obj => (
-                               <option key={obj} value={obj}>{obj}</option>
-                            ))}
-                         </select>
+              {coachView === 'library' && (
+                <CoachLibraryView
+                  onBodyPartClick={handleBodyPartClick}
+                />
+              )}
 
-                         {/* Filtre par statut */}
-                         <select
-                            value={filterStatus}
-                            onChange={(e) => setFilterStatus(e.target.value as 'all' | 'active' | 'inactive')}
-                            className="bg-white border border-[#007c89]/30 rounded-md px-3 py-2 text-sm text-[#181818] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
-                         >
-                            <option value="all">Tous les statuts</option>
-                            <option value="active">Actifs</option>
-                            <option value="inactive">Inactifs</option>
-                         </select>
+              {coachView === 'settings' && (
+                <CoachSettingsView
+                  onImport={() => importFileInputRef.current?.click()}
+                />
+              )}
+            </CoachLayout>
 
-                         {/* Filtre par tag */}
-                         {uniqueTags.length > 0 && (
-                            <select
-                               value={filterTag}
-                               onChange={(e) => setFilterTag(e.target.value)}
-                               className="bg-white border border-[#007c89]/30 rounded-md px-3 py-2 text-sm text-[#181818] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
-                            >
-                               <option value="all">Tous les tags</option>
-                               {uniqueTags.map(tag => (
-                                  <option key={tag} value={tag}>{tag}</option>
-                               ))}
-                            </select>
-                         )}
-
-                         {/* Tri */}
-                         <select
-                            value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value as 'name' | 'lastSession' | 'progress' | 'created')}
-                            className="bg-white border border-[#007c89]/30 rounded-md px-3 py-2 text-sm text-[#181818] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
-                         >
-                            <option value="name">Nom</option>
-                            <option value="lastSession">Dernière session</option>
-                            <option value="progress">Progression</option>
-                            <option value="created">Date de création</option>
-                         </select>
-
-                         {/* Compteur de résultats */}
-                         <div className="ml-auto px-3 py-2 bg-[#e0f4f6] rounded-md border border-[#007c89]/20">
-                            <span className="text-sm font-medium text-[#181818]">
-                               <span className="text-[#007c89] font-semibold">{filteredAndSortedClients.length}</span>
-                               <span className="text-[#6B7280] mx-1">/</span>
-                               <span>{clients.length}</span>
-                            </span>
-                            </div>
-                         </div>
-
-                      {/* Actions en lot - Style Hygie */}
-                      {selectedClients.size > 0 && (
-                         <div className="flex items-center gap-2 pt-3 border-t border-[#007c89]/20">
-                            <span className="text-xs font-semibold text-[#007c89] px-3 py-1.5 bg-[#e0f4f6] rounded-md border border-[#007c89]/30">
-                               {selectedClients.size} sélectionné{selectedClients.size > 1 ? 's' : ''}
-                            </span>
-                            <button
-                               onClick={() => DataExportService.exportToJSON(clients, selectedClients)}
-                               className="px-3 py-1.5 bg-white text-[#007c89] border border-[#007c89]/30 rounded-md text-xs font-semibold hover:bg-[#007c89] hover:text-white transition-all"
-                            >
-                               Exporter
-                            </button>
-                            <button
-                               onClick={() => {
-                                  if (window.confirm(`Supprimer ${selectedClients.size} client(s) ?`)) {
-                                     const newClients = clients.filter(c => !selectedClients.has(c.id));
-                                     setClients(newClients);
-                                     StorageService.saveClients(newClients);
-                                     setSelectedClients(new Set());
-                                     notificationService.success(`${selectedClients.size} client(s) supprimé(s)`);
-                                  }
-                               }}
-                               className="px-3 py-1.5 bg-[#EF4444] text-white rounded-md text-xs font-semibold hover:bg-[#DC2626] transition-all"
-                            >
-                               Supprimer
-                            </button>
-                            <button
-                               onClick={() => setSelectedClients(new Set())}
-                               className="px-3 py-1.5 bg-white text-[#181818] border border-[#007c89]/30 rounded-md text-xs font-semibold hover:bg-[#f3efe5] transition-all"
-                            >
-                               Annuler
-                            </button>
-                         </div>
-                      )}
-                      </div>
-
-                         {/* Statistiques globales et Alertes - Style Hygie */}
-                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {/* Statistiques - Cards style Hygie */}
-                            <div className="md:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-4">
-                               <div className="p-5 rounded-lg bg-white border border-[#007c89]/30 shadow-md">
-                                  <div className="text-xs font-semibold text-[#007c89] uppercase mb-2 tracking-wider">Clients</div>
-                                  <div className="font-bebas text-3xl text-[#181818]">{clients.length}</div>
-                               </div>
-                               <div className="p-5 rounded-lg bg-white border border-[#007c89]/30 shadow-md">
-                                  <div className="text-xs font-semibold text-[#007c89] uppercase mb-2 tracking-wider">Sessions</div>
-                                  <div className="font-bebas text-3xl text-[#181818]">
-                                     {clients.reduce((sum, c) => sum + (c.sessionRecords?.length || 0), 0)}
-                                  </div>
-                               </div>
-                               <div className="p-5 rounded-lg bg-[#007c89] border border-[#007c89] shadow-md">
-                                  <div className="text-xs font-semibold text-white uppercase mb-2 tracking-wider">Actifs</div>
-                                  <div className="font-bebas text-3xl text-white">
-                                     {clients.filter(c => {
-                                        const hasRecentSession = c.sessionRecords && c.sessionRecords.length > 0;
-                                        const lastSessionDate = hasRecentSession 
-                                          ? new Date(c.sessionRecords[c.sessionRecords.length - 1].date)
-                                          : null;
-                                        const daysSinceLastSession = lastSessionDate 
-                                          ? Math.floor((Date.now() - lastSessionDate.getTime()) / (1000 * 60 * 60 * 24))
-                                          : Infinity;
-                                        return daysSinceLastSession <= 30 && (c.activeProgram || hasRecentSession);
-                                     }).length}
-                                  </div>
-                               </div>
-                               <div className="p-5 rounded-lg bg-white border border-[#EF4444]/30 shadow-md">
-                                  <div className="text-xs font-semibold text-[#EF4444] uppercase mb-2 tracking-wider">Alertes</div>
-                                  <div className="font-bebas text-3xl text-[#EF4444]">
-                                     {clients.filter(c => 
-                                        (c.lastPainReport && c.lastPainReport.intensity >= 5) ||
-                                        (c.sleepQuality === 'Mauvaise') ||
-                                        (c.blessures_actives && c.blessures_actives.length > 0)
-                                     ).length}
-                                  </div>
-                               </div>
-                            </div>
-
-                            {/* Panneau d'alertes */}
-                            <div className="md:col-span-1">
-                               <CoachAlertsPanel
-                                  clients={clients}
-                                  onClientClick={(client) => {
-                                     setQuickViewClient(client);
-                                  }}
-                               />
-                            </div>
-                         </div>
-
-                         {/* Liste des Clients - Style Hygie */}
-                         {filteredAndSortedClients.length === 0 ? (
-                            <div className="p-12 rounded-lg bg-white border border-[#007c89]/20 text-center shadow-md">
-                               <p className="text-[#181818] font-bebas text-xl mb-2">Aucun client trouvé</p>
-                               <p className="text-[#6B7280] text-sm font-medium">Modifiez vos filtres de recherche</p>
-                            </div>
-                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                               {filteredAndSortedClients.map(client => (
-                                  <CoachClientCard
-                                    key={client.id}
-                                    client={client}
-                                    onSelect={selectProfileAndStart}
-                                    onAssessment={(c) => {
-                                      setSelectedClientForAssessment(c);
-                                      setAssessmentModalOpen(true);
-                                    }}
-                                    onEdit={(c) => {
-                                      setSelectedClientForEdit(c);
-                                      setEditClientModalOpen(true);
-                                    }}
-                                    onQuickView={(c) => {
-                                      setQuickViewClient(c);
-                                    }}
-                                    onDuplicate={handleDuplicateClient}
-                                    isSelected={selectedClients.has(client.id)}
-                                    onToggleSelect={(id) => {
-                                      const newSelected = new Set(selectedClients);
-                                      if (newSelected.has(id)) {
-                                        newSelected.delete(id);
-                                      } else {
-                                        newSelected.add(id);
-                                      }
-                                      setSelectedClients(newSelected);
-                                    }}
-                                  />
-                   ))}
-                </div>
-                         )}
-                      </>
-                   )}
-
-                   {/* VUE CALENDRIER */}
-                   {moderatorView === 'calendar' && (
-                      <>
-                         <CoachCalendarView
-                            clients={clients}
-                            groups={[]}
-                            onClientClick={(client) => {
-                              setQuickViewClient(client);
-                            }}
-                            onDayClick={(date) => {
-                              setSelectedCalendarDate(date);
-                              setPlanSessionModalOpen(true);
-                            }}
-                            onUpdateClients={(updatedClients) => {
-                              setClients(updatedClients);
-                              StorageService.saveClients(updatedClients);
-                            }}
-                         />
-                         <PlanSessionModal
-                            isOpen={planSessionModalOpen}
-                            onClose={() => {
-                              setPlanSessionModalOpen(false);
-                              setSelectedCalendarDate(null);
-                            }}
-                            selectedDate={selectedCalendarDate}
-                            clients={clients}
-                            onUpdate={(updatedClients) => {
-                              setClients(updatedClients);
-                              StorageService.saveClients(updatedClients);
-                            }}
-                         />
-                      </>
-                   )}
-
-                   {/* VUE STATISTIQUES */}
-                   {moderatorView === 'analytics' && (
-                      <CoachAnalytics clients={clients} />
-                   )}
-
-                   {/* VUE EXERCICES */}
-                   {moderatorView === 'exercises' && (
-                      <div className="p-6 rounded-lg bg-white border border-[#007c89]/20 shadow-md flex flex-col items-center justify-center gap-4 min-h-[600px] group relative overflow-visible">
-                         <h3 className="font-bebas text-xl text-[#007c89] mb-1">Bibliothèque d'Exercices</h3>
-                         <p className="text-xs text-[#6B7280] uppercase text-center mb-2">Cliquez sur une partie du corps</p>
-                         <div className="flex-1 w-full flex items-center justify-center">
-                           <HumanBodySVG onBodyPartClick={handleBodyPartClick} />
-                        </div>
-                      </div>
-                   )}
-
-                   {/* VUE IMPORT */}
-                   {moderatorView === 'import' && (
-                      <div className="space-y-4">
-                         <div 
-                            onClick={() => dashboardFileInputRef.current?.click()} 
-                            className="p-12 rounded-lg bg-white border-2 border-dashed border-[#007c89]/30 hover:border-[#007c89] cursor-pointer flex flex-col items-center justify-center gap-4 min-h-[300px] group relative overflow-hidden transition-all duration-300 shadow-md"
-                         >
-                            <input type="file" ref={dashboardFileInputRef} className="hidden" accept="image/*,.pdf" onChange={handleDashboardFileSelect} />
-                            <div className="text-5xl text-[#007c89] group-hover:text-[#006a75] transition-colors">⇪</div>
-                            <h3 className="font-bebas text-2xl text-[#181818] group-hover:text-[#007c89] transition-colors">Import Rapide</h3>
-                            <p className="text-sm text-[#6B7280] uppercase text-center">Glisser un fichier ou cliquer</p>
-                            <button 
-                               onClick={(e) => { e.stopPropagation(); setCreateClientModalOpen(true); }} 
-                               className="absolute bottom-6 text-xs font-semibold text-[#007c89] hover:text-[#006a75] uppercase transition-colors"
-                            >
-                               Ou création manuelle
-                            </button>
-                         </div>
-                         
-                         <div className="p-5 rounded-lg bg-white border border-[#007c89]/20 shadow-md">
-                            <h3 className="font-bebas text-lg text-[#181818] mb-3">Import depuis JSON</h3>
-                            <button 
-                               onClick={() => importFileInputRef.current?.click()}
-                               className="w-full px-6 py-3 bg-[#007c89] text-white rounded-md text-sm font-semibold uppercase hover:bg-[#006a75] transition-all shadow-sm hover:shadow-md"
-                            >
-                               📤 Sélectionner un fichier JSON
-                            </button>
-                    </div>
-                 </div>
-             )}
-          </div>
-             </main>
+            {/* Modales communes */}
 
              {/* Modale Création Manuelle (Coach) */}
              {createClientModalOpen && (
@@ -2264,13 +2191,13 @@ const App: React.FC = () => {
                }}
              />
 
-             {/* Modale Vue Rapide Client */}
-             <ClientQuickViewModal
-               isOpen={!!quickViewClient}
-               onClose={() => setQuickViewClient(null)}
-               client={quickViewClient}
-             />
-          </div>
+            {/* Modale Vue Rapide Client */}
+            <ClientQuickViewModal
+              isOpen={!!quickViewClient}
+              onClose={() => setQuickViewClient(null)}
+              client={quickViewClient}
+            />
+          </>
       );
   }
 
@@ -2324,9 +2251,12 @@ const App: React.FC = () => {
 
       <header className="h-16 shrink-0 border-b border-[#BAE6FD]/30 flex items-center justify-between px-6 bg-white/70 backdrop-blur-2xl z-50 shadow-[0_1px_20px_rgba(0,0,0,0.04)]">
          <div className="flex items-center gap-4">
-            <div className="hidden sm:block">
-                <h1 className="font-bebas text-xl text-[#1F2937]">HYGIE <span className="bg-gradient-to-r from-[#FBBF24] to-[#F59E0B] bg-clip-text text-transparent">ELITE</span></h1>
-                <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wide">{profile?.nom || ''}</p>
+            <div className="hidden sm:flex items-center gap-3">
+                <HygieLogo size="small" />
+                <div>
+                  <h1 className="font-bebas text-xl text-[#1F2937]">HYGIE <span className="bg-gradient-to-r from-[#FBBF24] to-[#F59E0B] bg-clip-text text-transparent">ELITE</span></h1>
+                  <p className="text-xs font-medium text-[#6B7280] uppercase tracking-wide">{profile?.nom || ''}</p>
+                </div>
             </div>
          </div>
          <div className="flex gap-3 items-center">
@@ -2492,38 +2422,223 @@ const App: React.FC = () => {
                         );
                     })()}
                     
-                    <div className="flex gap-4 flex-col">
-                        {!profile?.activeProgram && userRole !== 'COACH' && (
-                            <button onClick={() => setCreateProgramModalOpen(true)} className="w-full py-6 bg-gradient-to-r from-[#38BDF8] to-[#7DD3FC] text-[#1F2937] rounded-2xl font-bebas text-2xl hover:from-[#0EA5E9] hover:to-[#38BDF8] transition-all uppercase shadow-lg hover:shadow-xl">Créer Programme</button>
-                        )}
-                        {userRole === 'COACH' ? (
-                            <div className="space-y-3">
-                                {workout ? (
-                                    <button 
-                                        onClick={() => setWorkoutEditorOpen(true)} 
-                                        className="w-full py-8 bg-gradient-to-r from-[#EF4444] to-[#F87171] text-white rounded-2xl font-bebas text-4xl hover:scale-105 transition-all uppercase border-2 border-[#DC2626] shadow-xl"
-                                    >
-                                        ÉDITER LE PROTOCOLE
-                                    </button>
-                                ) : (
-                                    <button 
-                                        onClick={handleStartWorkout} 
-                                        className="w-full py-8 bg-gradient-to-r from-[#FCD34D] to-[#FBBF24] text-[#1F2937] rounded-2xl font-bebas text-4xl hover:scale-105 transition-all uppercase shadow-xl hover:shadow-2xl"
-                                    >
-                                        {profile?.activeProgram ? `GÉNÉRER SÉANCE ${profile.activeProgram?.currentSession || 0}` : 'GÉNÉRER PROTOCOLE'}
-                                    </button>
-                                )}
+                    {/* Logique intelligente de démarrage de séance - Synchronisation Coach/Client */}
+                    {userRole === 'CLIENT' && (() => {
+                      const dayInfo = getDayType(profile);
+                      const todaySession = getTodayPlannedSession(profile);
+                      const yesterdaySession = getYesterdayMissedSession(profile);
+                      
+                      // Vérifier s'il y a une séance complétée cette semaine (mais pas aujourd'hui)
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const dayOfWeek = today.getDay();
+                      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+                      const weekStart = new Date(today);
+                      weekStart.setDate(today.getDate() + diff);
+                      weekStart.setHours(0, 0, 0, 0);
+                      const weekEnd = new Date(weekStart);
+                      weekEnd.setDate(weekStart.getDate() + 6);
+                      weekEnd.setHours(23, 59, 59, 999);
+                      
+                      const hasCompletedSessionThisWeek = profile.sessionRecords?.some(sr => {
+                        const srDate = new Date(sr.date);
+                        srDate.setHours(0, 0, 0, 0);
+                        return srDate >= weekStart && srDate <= weekEnd && srDate.getTime() !== today.getTime();
+                      });
+                      
+                      const hasOtherPlannedSessionThisWeek = profile.plannedSessions?.some(ps => {
+                        const psDate = new Date(ps.date);
+                        psDate.setHours(0, 0, 0, 0);
+                        const isToday = psDate.getTime() === today.getTime();
+                        const isInWeek = psDate >= weekStart && psDate <= weekEnd;
+                        const isCompleted = ps.status === 'completed';
+                        return !isToday && isInWeek && !isCompleted;
+                      });
+                      
+                      // Afficher un avertissement si une séance est déjà complétée ou planifiée pour un autre jour
+                      const showWarning = hasCompletedSessionThisWeek || hasOtherPlannedSessionThisWeek;
+                      
+                      // Cas A : Séance prévue aujourd'hui
+                      if (dayInfo.type === 'session_planned' && todaySession) {
+                        return (
+                          <div className="space-y-6">
+                            {/* Avertissement si séance déjà complétée ou planifiée ailleurs */}
+                            {showWarning && (
+                              <div className="bg-gradient-to-br from-[#FEF2F2]/90 via-white to-[#FEE2E2]/50 backdrop-blur-sm p-6 rounded-2xl border-2 border-[#EF4444] shadow-[0_4px_16px_rgba(239,68,68,0.15)]">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-[#EF4444] flex items-center justify-center flex-shrink-0">
+                                    <span className="text-xl">⚠</span>
+                                  </div>
+                                  <div className="text-left flex-1">
+                                    <p className="text-sm font-semibold text-[#DC2626] mb-1">Attention</p>
+                                    <p className="text-xs text-[#6B7280]">
+                                      {hasCompletedSessionThisWeek 
+                                        ? 'Vous avez déjà complété une séance cette semaine. Une seule séance par semaine est autorisée.'
+                                        : 'Vous avez une séance planifiée pour un autre jour cette semaine. Une seule séance par semaine est autorisée.'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            
+                            <div className="bg-gradient-to-br from-[#10B981]/20 via-white to-[#D1FAE5]/30 backdrop-blur-sm p-8 rounded-3xl border-2 border-[#10B981] shadow-[0_8px_32px_rgba(16,185,129,0.2)]">
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="w-12 h-12 rounded-full bg-[#10B981] flex items-center justify-center">
+                                  <span className="text-2xl">✓</span>
+                                </div>
+                                <div className="text-left flex-1">
+                                  <p className="text-xs font-semibold text-[#10B981] uppercase tracking-wider mb-1">SÉANCE DU JOUR</p>
+                                  <p className="text-xl font-bebas text-[#1F2937]">
+                                    {todaySession.notes || `Séance planifiée - ${new Date(todaySession.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}`}
+                                  </p>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => handleStartWorkout(todaySession, false)} 
+                                disabled={profile.programStatus !== 'ready' && !todaySession.workoutPlan}
+                                className={`w-full py-10 rounded-3xl font-bebas text-4xl transition-all duration-500 uppercase relative overflow-hidden group ${
+                                  profile.programStatus !== 'ready' && !todaySession.workoutPlan
+                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+                                    : 'bg-gradient-to-r from-[#10B981] to-[#059669] text-white hover:scale-[1.02] shadow-[0_8px_32px_rgba(16,185,129,0.4)] hover:shadow-[0_12px_48px_rgba(16,185,129,0.5)]'
+                                }`}
+                              >
+                                <span className="relative z-10">
+                                  {profile.programStatus === 'generating' 
+                                    ? 'PROGRAMME EN CRÉATION...' 
+                                    : 'LANCER LA SÉANCE PLANIFIÉE'}
+                                </span>
+                                {profile.programStatus === 'ready' || todaySession.workoutPlan ? (
+                                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+                                ) : null}
+                              </button>
                             </div>
-                        ) : (
-                            <button 
-                                onClick={handleStartWorkout} 
-                                className={`${profile?.activeProgram ? 'w-full' : 'flex-1'} py-10 bg-gradient-to-r from-[#FCD34D] via-[#FBBF24] to-[#F59E0B] text-[#1F2937] rounded-3xl font-bebas text-4xl hover:scale-[1.02] transition-all duration-500 uppercase shadow-[0_8px_32px_rgba(251,191,36,0.3)] hover:shadow-[0_12px_48px_rgba(249,115,22,0.4)] relative overflow-hidden group`}
-                            >
-                                <span className="relative z-10">{profile?.activeProgram ? `SÉANCE ${profile.activeProgram?.currentSession || 0}` : 'LANCER LE PROTOCOLE'}</span>
+                            
+                            {/* Option séance libre en plus */}
+                            <div className="text-center">
+                              <p className="text-xs text-[#6B7280] mb-2">ou</p>
+                              <button 
+                                onClick={() => handleStartWorkout(undefined, true)} 
+                                className="text-sm font-semibold text-[#6B7280] hover:text-[#1F2937] transition-colors underline"
+                              >
+                                Lancer une séance libre (Hors Programme)
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      
+                      // Cas B : Séance manquée hier
+                      if (dayInfo.type === 'session_missed' && yesterdaySession) {
+                        return (
+                          <div className="space-y-6">
+                            <div className="bg-gradient-to-br from-[#F59E0B]/20 via-white to-[#FEF3C7]/30 backdrop-blur-sm p-8 rounded-3xl border-2 border-[#F59E0B] shadow-[0_8px_32px_rgba(245,158,11,0.2)]">
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="w-12 h-12 rounded-full bg-[#F59E0B] flex items-center justify-center">
+                                  <span className="text-2xl">⚠</span>
+                                </div>
+                                <div className="text-left flex-1">
+                                  <p className="text-xs font-semibold text-[#F59E0B] uppercase tracking-wider mb-1">RETARD DÉTECTÉ</p>
+                                  <p className="text-lg font-bebas text-[#1F2937]">
+                                    Une séance était prévue hier et n'a pas été effectuée
+                                  </p>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => handleStartWorkout(yesterdaySession, false)} 
+                                className="w-full py-10 bg-gradient-to-r from-[#F59E0B] to-[#D97706] text-white rounded-3xl font-bebas text-4xl hover:scale-[1.02] transition-all duration-500 uppercase shadow-[0_8px_32px_rgba(245,158,11,0.4)] hover:shadow-[0_12px_48px_rgba(245,158,11,0.5)] relative overflow-hidden group"
+                              >
+                                <span className="relative z-10">RATTRAPER LA SÉANCE D'HIER</span>
                                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
-                            </button>
-                        )}
-                    </div>
+                              </button>
+                            </div>
+                            
+                            {/* Option séance libre en plus */}
+                            <div className="text-center">
+                              <p className="text-xs text-[#6B7280] mb-2">ou</p>
+                              <button 
+                                onClick={() => handleStartWorkout(undefined, true)} 
+                                className="text-sm font-semibold text-[#6B7280] hover:text-[#1F2937] transition-colors underline"
+                              >
+                                Lancer une séance libre (Hors Programme)
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      
+                      // Cas C : Jour de repos
+                      return (
+                        <div className="space-y-6">
+                          <div className="bg-gradient-to-br from-[#E5E7EB]/50 via-white to-[#F3F4F6]/50 backdrop-blur-sm p-8 rounded-3xl border-2 border-[#D1D5DB] shadow-[0_8px_32px_rgba(0,0,0,0.05)]">
+                            <div className="flex items-center gap-3 mb-6">
+                              <div className="w-12 h-12 rounded-full bg-[#9CA3AF] flex items-center justify-center">
+                                <span className="text-2xl">😌</span>
+                              </div>
+                              <div className="text-left flex-1">
+                                <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-1">JOUR DE REPOS</p>
+                                <p className="text-lg font-bebas text-[#1F2937]">
+                                  Aucune séance planifiée aujourd'hui
+                                </p>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <button 
+                                onClick={() => {
+                                  // Séance d'étirements
+                                  toast.info("Fonctionnalité à venir : Séance d'étirements guidée");
+                                }}
+                                className="py-6 bg-gradient-to-br from-[#A78BFA] to-[#8B5CF6] text-white rounded-2xl font-bebas text-xl hover:scale-105 transition-all uppercase shadow-lg"
+                              >
+                                Étirements
+                              </button>
+                              
+                              <button 
+                                onClick={() => {
+                                  // Méditation
+                                  toast.info("Fonctionnalité à venir : Session de méditation");
+                                }}
+                                className="py-6 bg-gradient-to-br from-[#60A5FA] to-[#3B82F6] text-white rounded-2xl font-bebas text-xl hover:scale-105 transition-all uppercase shadow-lg"
+                              >
+                                Méditation
+                              </button>
+                              
+                              <button 
+                                onClick={() => handleStartWorkout(undefined, true)} 
+                                className="py-6 bg-gradient-to-br from-[#FCD34D] to-[#FBBF24] text-[#1F2937] rounded-2xl font-bebas text-xl hover:scale-105 transition-all uppercase shadow-lg"
+                              >
+                                Séance Libre
+                              </button>
+                            </div>
+                            
+                            <p className="text-xs text-[#6B7280] mt-4 text-center italic">
+                              Les séances libres ne sont pas comptabilisées dans votre programme
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* Mode Coach - Logique inchangée */}
+                    {userRole === 'COACH' && (
+                        <div className="space-y-3">
+                            {workout ? (
+                                <button 
+                                    onClick={() => setWorkoutEditorOpen(true)} 
+                                    className="w-full py-8 bg-gradient-to-r from-[#EF4444] to-[#F87171] text-white rounded-2xl font-bebas text-4xl hover:scale-105 transition-all uppercase border-2 border-[#DC2626] shadow-xl"
+                                >
+                                    ÉDITER LE PROTOCOLE
+                                </button>
+                            ) : (
+                                <button 
+                                    onClick={() => handleStartWorkout(undefined, false)} 
+                                    className="w-full py-8 bg-gradient-to-r from-[#FCD34D] to-[#FBBF24] text-[#1F2937] rounded-2xl font-bebas text-4xl hover:scale-105 transition-all uppercase shadow-xl hover:shadow-2xl"
+                                >
+                                    {profile?.activeProgram ? `GÉNÉRER SÉANCE ${profile.activeProgram?.currentSession || 0}` : 'GÉNÉRER PROTOCOLE'}
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         )}
@@ -2597,6 +2712,22 @@ const App: React.FC = () => {
                     <div className="mb-8 pr-20">
                          <h2 className="text-4xl md:text-6xl font-bebas text-[#1F2937] uppercase">{workout.liste_exos[currentExoIndex].nom}</h2>
                          <p className="text-sm text-[#6B7280] font-medium mt-2">{workout.liste_exos[currentExoIndex].description}</p>
+                         {/* Affichage RPE Cible */}
+                         {(() => {
+                           const currentExo = workout.liste_exos[currentExoIndex];
+                           const rpeMatch = currentExo.coach_tip?.match(/RPE Cible: ([\d.]+)\/10/);
+                           const targetRPE = rpeMatch ? parseFloat(rpeMatch[1]) : null;
+                           
+                           if (targetRPE) {
+                             return (
+                               <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#F59E0B]/20 to-[#FBBF24]/20 rounded-full border border-[#F59E0B]/40">
+                                 <span className="text-xs font-semibold text-[#6B7280] uppercase">Intensité Cible</span>
+                                 <span className="text-2xl font-bebas text-[#F59E0B]">{targetRPE}/10</span>
+                               </div>
+                             );
+                           }
+                           return null;
+                         })()}
                     </div>
                     
                     <div className="flex flex-col md:flex-row gap-8 items-center workout-layout">
@@ -3037,7 +3168,7 @@ const App: React.FC = () => {
           }}
       />
     </div>
-      <ToastContainer />
+      <Toaster position="top-center" richColors />
     </CoachClientView>
   );
 };

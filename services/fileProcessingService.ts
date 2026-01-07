@@ -1,6 +1,11 @@
 /**
  * Service optimisé pour le traitement des fichiers (PDF, images, etc.)
+ * 
+ * IMPORTANT: Installer browser-image-compression avec:
+ * npm install browser-image-compression
  */
+
+import { loadImageCompression } from './imageCompressionWrapper';
 
 /**
  * Convertit un fichier en Base64 de manière optimisée avec feedback progressif
@@ -41,36 +46,62 @@ export const fileToBase64Optimized = (
 };
 
 /**
- * Optimise un fichier avant l'envoi (compression pour images, réduction pour PDFs)
+ * Optimise un fichier avant l'envoi (compression agressive pour images, pas de modification pour PDFs)
  */
 export const optimizeFileForUpload = async (
   file: File,
-  maxSize: number = 5 * 1024 * 1024 // 5MB par défaut
+  maxSize: number = 0.8 * 1024 * 1024 // 800KB par défaut (compression agressive)
 ): Promise<File> => {
-  // Si le fichier est déjà petit, on le retourne tel quel
-  if (file.size <= maxSize) {
+  // Pour les PDFs, on ne les touche pas
+  if (file.type === 'application/pdf') {
+    if (file.size > 10 * 1024 * 1024) { // > 10MB
+      console.warn(`Fichier PDF volumineux (${(file.size / 1024 / 1024).toFixed(2)}MB). Le traitement peut être plus long.`);
+    }
     return file;
   }
 
-  // Pour les images, on peut compresser
+  // Pour les images, compression systématique AVANT la conversion en Base64
+  // (même si l'image est déjà petite, on la compresse pour optimiser l'envoi à l'IA)
   if (file.type.startsWith('image/')) {
-    return compressImage(file, maxSize);
+    // Charger browser-image-compression si disponible
+    const compressionLib = await loadImageCompression();
+    
+    // Si browser-image-compression est disponible, l'utiliser
+    if (compressionLib) {
+      try {
+        const options = {
+          maxSizeMB: 0.8, // Maximum 800KB
+          maxWidthOrHeight: 1920, // Dimension maximale
+          useWebWorker: true, // Utilise un Web Worker pour ne pas figer l'interface
+          fileType: file.type, // Conserve le type MIME original
+          initialQuality: 0.8, // Qualité initiale (sera ajustée automatiquement pour atteindre maxSizeMB)
+        };
+
+        const compressedFile = await compressionLib(file, options);
+        
+        console.log(`Image compressée: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`);
+        
+        return compressedFile;
+      } catch (error) {
+        console.error('Erreur lors de la compression de l\'image avec browser-image-compression:', error);
+        // Fallback vers la méthode basique en cas d'erreur
+        return compressImageFallback(file, maxSize);
+      }
+    } else {
+      // Fallback si browser-image-compression n'est pas disponible
+      console.log('Utilisation du fallback de compression (browser-image-compression non installé)');
+      return compressImageFallback(file, maxSize);
+    }
   }
 
-  // Pour les PDFs, on ne peut pas vraiment les compresser côté client
-  // Mais on peut informer l'utilisateur ou utiliser une API de compression
-  // Pour l'instant, on retourne le fichier tel quel mais on pourrait ajouter une alerte
-  if (file.size > 10 * 1024 * 1024) { // > 10MB
-    console.warn(`Fichier volumineux (${(file.size / 1024 / 1024).toFixed(2)}MB). Le traitement peut être plus long.`);
-  }
-
+  // Pour les autres types de fichiers, on retourne tel quel
   return file;
 };
 
 /**
- * Compresse une image
+ * Fallback de compression d'image (utilisé si browser-image-compression n'est pas disponible)
  */
-const compressImage = (file: File, maxSize: number): Promise<File> => {
+const compressImageFallback = (file: File, maxSize: number): Promise<File> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -79,10 +110,10 @@ const compressImage = (file: File, maxSize: number): Promise<File> => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        let quality = 0.9;
+        let quality = 0.7;
 
-        // Réduit la taille si nécessaire
-        const maxDimension = 2000;
+        // Réduit la taille si nécessaire (max 1920px comme demandé)
+        const maxDimension = 1920;
         if (width > maxDimension || height > maxDimension) {
           if (width > height) {
             height = (height / width) * maxDimension;

@@ -253,39 +253,32 @@ export const parseMedicalAssessment = async (input: AssessmentInput): Promise<As
       ]
     },
     config: {
-      systemInstruction: `Tu es un assistant médical expert pour coach sportif. 
-      Analyse le document fourni (texte, image ou PDF) de manière EXHAUSTIVE et PRÉCISE.
-      
-      IMPORTANT : Extrais TOUTES les informations disponibles dans le document, même si elles sont implicites.
-      
-      Informations médicales OBLIGATOIRES :
-      - "blessures_actives": Liste COMPLÈTE des zones douloureuses, blessures, pathologies (ex: "Genou Droit", "Lombaires", "Épaule gauche", "Tendinite achilléenne"). Si aucune blessure n'est mentionnée, renvoie un tableau vide [].
-      - "details_blessures": Résumé DÉTAILLÉ et technique de toutes les pathologies, blessures, douleurs identifiées. Inclus la localisation, la sévérité, la chronicité si mentionnées.
-      - "stressLevel": Estime le niveau de stress (Bas, Moyen, Élevé) selon le ton, les mentions de stress, anxiété, fatigue mentale.
-      - "sleepQuality": Estime la qualité du sommeil (Mauvaise, Moyenne, Excellente) selon les mentions de sommeil, récupération, fatigue.
-      - "recommendations": Une phrase de conseil personnalisée pour le coach basée sur toutes les informations extraites.
+      systemInstruction: `Assistant médical expert. Analyse le document et retourne un JSON avec ces champs :
 
-      Données démographiques (extrais si présentes, sinon null) :
-      - "detected_name": Le NOM COMPLET du patient/personne. Cherche dans l'en-tête, la signature, ou toute mention de nom. PRIORITÉ ABSOLUE : trouve le nom même s'il est partiellement visible.
-      - "detected_age": Age en années (number). Cherche "ans", "âge", "né(e) en", etc.
-      - "detected_genre": Homme, Femme, ou Non spécifié. Cherche les pronoms, mentions explicites.
-      - "detected_poids": Poids en kg (string). Cherche "kg", "poids", "masse corporelle".
-      - "detected_taille": Taille en cm (string). Cherche "cm", "taille", "hauteur".
-      - "detected_objectif": Objectif principal déduit (ex: "Perte de poids", "Marathon", "Renforcement musculaire", "Rééducation", "Performance sportive").
+OBLIGATOIRES:
+- blessures_actives: string[] (zones douloureuses/blessures, ex: "Genou Droit", "Lombaires")
+- details_blessures: string (résumé technique avec localisation, sévérité, chronicité)
+- stressLevel: "Bas" | "Moyen" | "Élevé" (selon mentions stress/anxiété/fatigue)
+- sleepQuality: "Mauvaise" | "Moyenne" | "Excellente" (selon mentions sommeil/récupération)
+- recommendations: string (conseil personnalisé pour le coach)
 
-      Informations complémentaires (extrais si présentes) :
-      - "detected_faiblesses": Liste des faiblesses musculaires mentionnées (ex: "Quadriceps faibles", "Core faible", "Déséquilibre postural"). Si aucune mention, renvoie [].
-      - "detected_limitations": Liste des limitations fonctionnelles (ex: "Flexion genou limitée", "Rotation épaule douloureuse", "Endurance réduite"). Si aucune mention, renvoie [].
-      - "detected_antecedents": Antécédents médicaux, chirurgicaux, traumatiques mentionnés. Si aucun, renvoie null.
-      - "detected_medications": Liste des médicaments mentionnés. Si aucun, renvoie [].
-      - "detected_niveau_activite": Niveau d'activité actuel mentionné (ex: "Sédentaire", "Actif", "Sportif régulier", "Athlète"). Si non mentionné, renvoie null.
-      - "detected_experience": Expérience sportive mentionnée (ex: "Débutant", "Intermédiaire", "Avancé", "Expert"). Si non mentionné, renvoie null.
-      
-      RÈGLES IMPORTANTES :
-      1. Si le nom est partiellement visible ou ambigu, extrais ce qui est visible et indique-le clairement.
-      2. Pour les blessures et faiblesses, sois exhaustif : liste TOUT ce qui est mentionné, même indirectement.
-      3. Si une information n'est pas clairement mentionnée, tu peux faire des déductions logiques basées sur le contexte.
-      4. Ne laisse AUCUN champ important vide si l'information est disponible dans le document.`,
+DÉMOGRAPHIQUES (si présents, sinon null):
+- detected_name: string (NOM COMPLET, PRIORITÉ - chercher en-tête/signature)
+- detected_age: number (chercher "ans", "âge", "né(e) en")
+- detected_genre: "Homme" | "Femme" | "Non spécifié"
+- detected_poids: string (kg)
+- detected_taille: string (cm)
+- detected_objectif: string (ex: "Perte de poids", "Marathon", "Renforcement")
+
+COMPLÉMENTAIRES (si présents, sinon null/[]):
+- detected_faiblesses: string[] (ex: "Quadriceps faibles", "Core faible")
+- detected_limitations: string[] (ex: "Flexion genou limitée", "Endurance réduite")
+- detected_antecedents: string (antécédents médicaux/chirurgicaux)
+- detected_medications: string[] (médicaments mentionnés)
+- detected_niveau_activite: string (ex: "Sédentaire", "Actif", "Athlète")
+- detected_experience: "Débutant" | "Intermédiaire" | "Avancé"
+
+RÈGLES: Sois exhaustif, extrais TOUT ce qui est mentionné. Si info absente, null/[] selon le type.`,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
