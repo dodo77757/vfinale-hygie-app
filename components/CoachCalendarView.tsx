@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { UserProfile, CalendarViewMode, CalendarFilter } from '../types';
 import { StorageService } from '../services/storageService';
+import { CalendarValidationService } from '../services/calendarValidationService';
 import { CalendarWeekView } from './CalendarWeekView';
 import { CalendarListView } from './CalendarListView';
 import { CalendarFilters } from './CalendarFilters';
@@ -343,8 +344,32 @@ export const CoachCalendarView: React.FC<CoachCalendarViewProps> = ({
         {/* Vue principale */}
         <div className={`${showFilters || showStats || showSearch || showColors ? 'lg:col-span-8' : 'lg:col-span-12'}`}>
           {viewMode === 'month' && (
-            <div className="p-6 rounded-lg bg-white border border-[#007c89]/20 shadow-md">
-              {renderMonthView()}
+            <div className="space-y-4">
+              {/* Légende des couleurs */}
+              <div className="p-4 rounded-lg bg-white border border-[#007c89]/20 shadow-sm">
+                <h4 className="text-xs font-semibold text-[#181818] mb-3 uppercase tracking-wider">Légende</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded bg-green-50 border border-green-200"></div>
+                    <span className="text-xs text-[#6B7280]">Jour idéal</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded bg-orange-50 border border-orange-200"></div>
+                    <span className="text-xs text-[#6B7280]">Récupération insuffisante</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded bg-red-50 border border-red-200"></div>
+                    <span className="text-xs text-[#6B7280]">Séance déjà prévue</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded bg-gray-100 border border-gray-300 opacity-60"></div>
+                    <span className="text-xs text-[#6B7280]">Jour de repos</span>
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 rounded-lg bg-white border border-[#007c89]/20 shadow-md">
+                {renderMonthView()}
+              </div>
             </div>
           )}
           {viewMode === 'week' && (
@@ -453,6 +478,27 @@ export const CoachCalendarView: React.FC<CoachCalendarViewProps> = ({
             const completedSessions = dayData.sessions.filter(s => s.type === 'completed');
             const plannedSessions = dayData.sessions.filter(s => s.type === 'planned');
 
+            // Calculer le statut du jour pour le feedback visuel (pour le premier client filtré)
+            // On prend le meilleur statut parmi tous les clients pour ce jour
+            let dayStatus: 'ideal' | 'warning' | 'rest' | 'blocked' | 'neutral' = 'neutral';
+            if (isCurrentMonthDay && !isPast && filteredClients.length > 0) {
+              // Pour chaque client, calculer le statut et prendre le pire (le plus restrictif)
+              const statuses = filteredClients.map(client => 
+                CalendarValidationService.getDayStatus(client, dayData.date)
+              );
+              
+              // Priorité: blocked > warning > rest > ideal > neutral
+              if (statuses.includes('blocked')) {
+                dayStatus = 'blocked';
+              } else if (statuses.includes('warning')) {
+                dayStatus = 'warning';
+              } else if (statuses.includes('rest')) {
+                dayStatus = 'rest';
+              } else if (statuses.includes('ideal')) {
+                dayStatus = 'ideal';
+              }
+            }
+
             const handleDayClick = () => {
               if (onDayClick && isCurrentMonthDay) {
                 setSelectedDay(dayData.date);
@@ -482,13 +528,33 @@ export const CoachCalendarView: React.FC<CoachCalendarViewProps> = ({
               }
             };
 
+            // Classes CSS selon le statut du jour
+            const getDayStatusClasses = () => {
+              if (!isCurrentMonthDay || isPast) return '';
+              
+              switch (dayStatus) {
+                case 'ideal':
+                  return 'bg-green-50 border-green-200 hover:bg-green-100';
+                case 'warning':
+                  return 'bg-orange-50 border-orange-200 hover:bg-orange-100';
+                case 'rest':
+                  return 'bg-gray-100 border-gray-300 opacity-60';
+                case 'blocked':
+                  return 'bg-red-50 border-red-200 hover:bg-red-100';
+                default:
+                  return '';
+              }
+            };
+
             return (
               <div
                 key={idx}
                 onClick={handleDayClick}
                 className={`
                   min-h-[90px] p-2.5 rounded-md border transition-all duration-200 shadow-sm
-                  ${isCurrentMonthDay ? 'bg-white border-[#007c89]/20 hover:border-[#007c89] hover:shadow-md' : 'bg-[#f3efe5] border-[#007c89]/10 opacity-50'}
+                  ${isCurrentMonthDay 
+                    ? getDayStatusClasses() || 'bg-white border-[#007c89]/20 hover:border-[#007c89] hover:shadow-md'
+                    : 'bg-[#f3efe5] border-[#007c89]/10 opacity-50'}
                   ${isTodayDay ? 'border-[#007c89] bg-[#e0f4f6] ring-2 ring-[#007c89]/20 shadow-md' : ''}
                   ${isCurrentMonthDay && !isPast ? 'hover:border-[#007c89] cursor-pointer hover:bg-[#f3efe5]' : ''}
                   ${sessionCount > 0 ? 'cursor-pointer' : ''}

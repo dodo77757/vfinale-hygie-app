@@ -12,6 +12,8 @@ interface CoachClientsViewProps {
   onToggleSelect: (clientId: string) => void;
   onBatchExport: () => void;
   onBatchDelete: () => void;
+  onCreateClientClick?: () => void;
+  onFileSelect?: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 type ViewMode = 'list' | 'grid';
@@ -28,8 +30,11 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
   selectedClients,
   onToggleSelect,
   onBatchExport,
-  onBatchDelete
+  onBatchDelete,
+  onCreateClientClick,
+  onFileSelect
 }) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterObjective, setFilterObjective] = useState<string>('all');
@@ -161,34 +166,34 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn">
+    <div className="space-y-8" style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}>
       {/* Header avec toggle et recherche */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-bebas text-4xl text-[#1F2937] mb-2">Clients</h1>
-          <p className="text-sm text-[#6B7280] font-medium">
+          <h1 className="text-4xl md:text-5xl font-bold text-[#1F2937] mb-3 tracking-tight">Clients</h1>
+          <p className="text-base text-[#6B7280] font-normal">
             {filteredAndSortedClients.length} client{filteredAndSortedClients.length > 1 ? 's' : ''}
           </p>
         </div>
 
         {/* Toggle Liste/Grille */}
-        <div className="flex items-center gap-2 bg-white rounded-xl p-1 border border-[#E5E7EB] shadow-sm">
+        <div className="flex items-center gap-2 bg-white rounded-full p-1 border border-[#E5E7EB]/50 shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
           <button
             onClick={() => setViewMode('list')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200 ${
               viewMode === 'list'
-                ? 'bg-[#007c89] text-white shadow-sm'
-                : 'text-[#6B7280] hover:text-[#1F2937]'
+                ? 'bg-gradient-to-r from-[#F97316] to-[#EC4899] text-white shadow-md'
+                : 'text-[#6B7280] hover:text-[#1F2937] hover:bg-[#F9FAFB]'
             }`}
           >
             Liste
           </button>
           <button
             onClick={() => setViewMode('grid')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200 ${
               viewMode === 'grid'
-                ? 'bg-[#007c89] text-white shadow-sm'
-                : 'text-[#6B7280] hover:text-[#1F2937]'
+                ? 'bg-gradient-to-r from-[#F97316] to-[#EC4899] text-white shadow-md'
+                : 'text-[#6B7280] hover:text-[#1F2937] hover:bg-[#F9FAFB]'
             }`}
           >
             Grille
@@ -197,7 +202,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
       </div>
 
       {/* Barre de recherche et filtres */}
-      <div className="bg-white rounded-2xl border border-[#E5E7EB] shadow-sm p-6 space-y-4">
+      <div className="bg-white rounded-3xl border border-[#E5E7EB]/50 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.05)] p-6 md:p-8 space-y-4">
         {/* Recherche */}
         <div className="flex gap-3">
           <div className="flex-1 relative">
@@ -206,7 +211,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Rechercher un client..."
-              className="w-full bg-[#F9FAFB] border border-[#E5E7EB] rounded-xl px-4 py-3 pl-11 text-sm text-[#1F2937] placeholder:text-[#9CA3AF] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
+              className="w-full bg-[#F9FAFB] border-2 border-[#E5E7EB] rounded-2xl px-4 py-3.5 pl-12 text-sm text-[#1F2937] placeholder:text-[#9CA3AF] focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 transition-all duration-200"
             />
             <span className="absolute left-4 top-3.5 text-[#9CA3AF] text-lg">🔍</span>
           </div>
@@ -218,7 +223,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
                 setFilterStatus('all');
                 setFilterTag('all');
               }}
-              className="px-5 py-3 bg-[#F3F4F6] text-[#6B7280] rounded-xl text-sm font-semibold hover:bg-[#E5E7EB] transition-all"
+              className="px-5 py-3.5 bg-[#F9FAFB] text-[#6B7280] border-2 border-[#E5E7EB] rounded-2xl text-sm font-semibold hover:bg-white hover:border-[#F97316] hover:text-[#F97316] transition-all duration-200"
             >
               Réinitialiser
             </button>
@@ -230,7 +235,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
           <select
             value={filterObjective}
             onChange={(e) => setFilterObjective(e.target.value)}
-            className="bg-white border border-[#E5E7EB] rounded-xl px-3 py-2 text-sm text-[#1F2937] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
+            className="bg-white border-2 border-[#E5E7EB] rounded-2xl px-4 py-2.5 text-sm text-[#1F2937] focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 transition-all duration-200"
           >
             <option value="all">Tous les objectifs</option>
             {uniqueObjectives.map(obj => (
@@ -241,7 +246,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value as FilterStatus)}
-            className="bg-white border border-[#E5E7EB] rounded-xl px-3 py-2 text-sm text-[#1F2937] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
+            className="bg-white border-2 border-[#E5E7EB] rounded-2xl px-4 py-2.5 text-sm text-[#1F2937] focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 transition-all duration-200"
           >
             <option value="all">Tous les statuts</option>
             <option value="active">Actifs</option>
@@ -252,7 +257,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
             <select
               value={filterTag}
               onChange={(e) => setFilterTag(e.target.value)}
-              className="bg-white border border-[#E5E7EB] rounded-xl px-3 py-2 text-sm text-[#1F2937] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
+              className="bg-white border-2 border-[#E5E7EB] rounded-2xl px-4 py-2.5 text-sm text-[#1F2937] focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 transition-all duration-200"
             >
               <option value="all">Tous les tags</option>
               {uniqueTags.map(tag => (
@@ -264,7 +269,7 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
-            className="bg-white border border-[#E5E7EB] rounded-xl px-3 py-2 text-sm text-[#1F2937] focus:border-[#007c89] focus:outline-none focus:ring-2 focus:ring-[#007c89]/20 transition-all"
+            className="bg-white border-2 border-[#E5E7EB] rounded-2xl px-4 py-2.5 text-sm text-[#1F2937] focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 transition-all duration-200"
           >
             <option value="name">Trier par nom</option>
             <option value="lastSession">Dernière session</option>
@@ -276,18 +281,18 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
         {/* Actions en lot */}
         {selectedClients.size > 0 && (
           <div className="flex items-center gap-2 pt-3 border-t border-[#E5E7EB]">
-            <span className="px-3 py-1.5 bg-[#007c89] text-white text-xs font-semibold rounded-lg">
+            <span className="px-4 py-2 bg-gradient-to-r from-[#F97316] to-[#EC4899] text-white text-sm font-semibold rounded-full shadow-sm">
               {selectedClients.size} sélectionné{selectedClients.size > 1 ? 's' : ''}
             </span>
             <button
               onClick={onBatchExport}
-              className="px-3 py-1.5 bg-white text-[#007c89] border border-[#007c89] rounded-lg text-xs font-semibold hover:bg-[#007c89] hover:text-white transition-all"
+              className="px-4 py-2 bg-white text-[#F97316] border-2 border-[#F97316] rounded-full text-sm font-semibold hover:bg-gradient-to-r hover:from-[#F97316] hover:to-[#EC4899] hover:text-white hover:border-transparent transition-all duration-200 shadow-sm hover:shadow-md"
             >
               Exporter
             </button>
             <button
               onClick={onBatchDelete}
-              className="px-3 py-1.5 bg-[#EF4444] text-white rounded-lg text-xs font-semibold hover:bg-[#DC2626] transition-all"
+              className="px-4 py-2 bg-[#EF4444] text-white rounded-full text-sm font-semibold hover:bg-[#DC2626] transition-all duration-200 shadow-sm hover:shadow-md"
             >
               Supprimer
             </button>
@@ -304,15 +309,50 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
         )}
       </div>
 
+      {/* Carte Import Rapide */}
+      {onFileSelect && (
+        <div className="mb-6">
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="bg-gradient-to-br from-[#FEF3C7] via-[#FBCFE8] to-[#FDE68A] rounded-3xl border-2 border-dashed border-[#F97316]/50 hover:border-solid hover:shadow-lg transition-all duration-200 cursor-pointer p-8 md:p-10 text-center group"
+          >
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              accept="image/*,application/pdf,.pdf"
+              onChange={onFileSelect}
+            />
+            <div className="text-5xl mb-4 group-hover:scale-110 transition-transform duration-200">⇪</div>
+            <h3 className="text-2xl font-bold text-[#1F2937] mb-2">Import Rapide</h3>
+            <p className="text-sm text-[#6B7280] font-normal mb-4">Glisser un bilan PDF ou image, ou cliquer pour sélectionner</p>
+            {onCreateClientClick && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCreateClientClick();
+                }}
+                className="text-xs font-semibold text-[#6B7280] hover:text-[#007c89] transition-colors underline"
+              >
+                Ou création manuelle
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Affichage Liste ou Grille */}
       {filteredAndSortedClients.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] shadow-sm p-12 text-center">
-          <p className="text-[#1F2937] font-bebas text-xl mb-2">Aucun client trouvé</p>
-          <p className="text-[#6B7280] text-sm font-medium">Modifiez vos filtres de recherche</p>
+        <div className="bg-white rounded-3xl border border-[#E5E7EB]/50 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.05)] p-12 md:p-16 text-center">
+          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#F3F4F6] to-[#E5E7EB] flex items-center justify-center mx-auto mb-4">
+            <span className="text-2xl">🔍</span>
+          </div>
+          <p className="text-xl font-bold text-[#1F2937] mb-2">Aucun client trouvé</p>
+          <p className="text-sm text-[#6B7280] font-normal">Modifiez vos filtres de recherche</p>
         </div>
       ) : viewMode === 'list' ? (
         /* Mode Liste - Tableau */
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] shadow-sm overflow-hidden">
+        <div className="bg-white rounded-3xl border border-[#E5E7EB]/50 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.05)] overflow-hidden">
           <table className="w-full">
             <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
               <tr>
@@ -445,10 +485,10 @@ export const CoachClientsView: React.FC<CoachClientsViewProps> = ({
               <div
                 key={client.id}
                 onClick={() => onClientClick(client, 'DASHBOARD')}
-                className={`group relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 shadow-sm hover:shadow-md ${
+                    className={`group relative p-6 md:p-8 rounded-3xl border border-[#E5E7EB]/50 cursor-pointer transition-all duration-200 shadow-[0_4px_12px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_30px_-10px_rgba(0,0,0,0.05)] hover:scale-[1.02] ${
                   selectedClients.has(client.id)
-                    ? 'bg-[#E0F4F6] border-[#007c89]'
-                    : 'bg-white border-[#E5E7EB] hover:border-[#007c89]'
+                    ? 'bg-gradient-to-br from-[#FEF3C7] to-white border-[#F97316]'
+                    : 'bg-white hover:border-[#F97316]/50'
                 }`}
               >
                 {/* Checkbox */}

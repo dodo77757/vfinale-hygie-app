@@ -9,12 +9,19 @@ import { loadImageCompression } from './imageCompressionWrapper';
 
 /**
  * Convertit un fichier en Base64 de manière optimisée avec feedback progressif
+ * Gère correctement les PDFs et les images
  */
 export const fileToBase64Optimized = (
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
+    // Vérification que le fichier est valide
+    if (!file || file.size === 0) {
+      reject(new Error('Fichier vide ou invalide'));
+      return;
+    }
+
     const reader = new FileReader();
     const fileSize = file.size;
     let loaded = 0;
@@ -30,18 +37,22 @@ export const fileToBase64Optimized = (
 
     reader.onload = () => {
       if (onProgress) onProgress(100);
-      resolve(reader.result as string);
+      const result = reader.result as string;
+      if (!result) {
+        reject(new Error('Échec de la conversion en Base64'));
+        return;
+      }
+      resolve(result);
     };
 
-    reader.onerror = error => reject(error);
+    reader.onerror = (error) => {
+      console.error('Erreur FileReader:', error);
+      reject(new Error(`Erreur lors de la lecture du fichier: ${file.name}`));
+    };
 
-    // Utilise readAsDataURL pour les petits fichiers, ou readAsArrayBuffer pour les gros
-    if (file.size > 5 * 1024 * 1024) { // > 5MB
-      // Pour les gros fichiers, on pourrait compresser d'abord
-      reader.readAsDataURL(file);
-    } else {
-      reader.readAsDataURL(file);
-    }
+    // Utilise readAsDataURL pour tous les fichiers (PDFs et images)
+    // Cette méthode fonctionne pour tous les types de fichiers
+    reader.readAsDataURL(file);
   });
 };
 
@@ -52,17 +63,37 @@ export const optimizeFileForUpload = async (
   file: File,
   maxSize: number = 0.8 * 1024 * 1024 // 800KB par défaut (compression agressive)
 ): Promise<File> => {
-  // Pour les PDFs, on ne les touche pas
-  if (file.type === 'application/pdf') {
+  // Vérification explicite pour les PDFs - PRIORITÉ ABSOLUE
+  // Vérifie le type MIME et l'extension du fichier
+  // NOTE: Certains navigateurs ne détectent pas correctement le type MIME des PDFs
+  // On vérifie donc aussi l'extension et on peut même lire les premiers bytes si nécessaire
+  const fileName = file.name.toLowerCase();
+  const fileType = file.type.toLowerCase();
+  const isPDF = fileType === 'application/pdf' || 
+                fileType === 'application/x-pdf' ||
+                fileType === 'pdf' ||
+                fileName.endsWith('.pdf');
+  
+  console.log(`[optimizeFileForUpload] Analyse du fichier:`, {
+    name: file.name,
+    type: file.type,
+    size: `${(file.size / 1024 / 1024).toFixed(2)}MB`,
+    isPDF: isPDF
+  });
+  
+  if (isPDF) {
+    console.log(`[optimizeFileForUpload] ✅ Fichier PDF détecté: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB) - Retour immédiat sans compression`);
     if (file.size > 10 * 1024 * 1024) { // > 10MB
-      console.warn(`Fichier PDF volumineux (${(file.size / 1024 / 1024).toFixed(2)}MB). Le traitement peut être plus long.`);
+      console.warn(`⚠️ Fichier PDF volumineux (${(file.size / 1024 / 1024).toFixed(2)}MB). Le traitement peut être plus long.`);
     }
+    // Retourne immédiatement le fichier PDF SANS aucune modification
     return file;
   }
 
-  // Pour les images, compression systématique AVANT la conversion en Base64
+  // Pour les images UNIQUEMENT, compression systématique AVANT la conversion en Base64
   // (même si l'image est déjà petite, on la compresse pour optimiser l'envoi à l'IA)
-  if (file.type.startsWith('image/')) {
+  // IMPORTANT: Ne compresser QUE les fichiers dont le type commence par 'image/'
+  if (file.type && file.type.startsWith('image/')) {
     // Charger browser-image-compression si disponible
     const compressionLib = await loadImageCompression();
     

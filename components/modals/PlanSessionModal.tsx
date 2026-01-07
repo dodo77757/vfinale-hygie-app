@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile } from '../../types';
 import { StorageService } from '../../services/storageService';
-import { notificationService } from '../../services/notificationService';
+import { toast } from 'sonner';
 import { CalendarValidationService } from '../../services/calendarValidationService';
 
 interface PlanSessionModalProps {
@@ -22,14 +22,38 @@ export const PlanSessionModal: React.FC<PlanSessionModalProps> = ({
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [notes, setNotes] = useState('');
   const [autoGenerate, setAutoGenerate] = useState(false);
+  const [validationResult, setValidationResult] = useState<{
+    canPlan: boolean;
+    severity: 'error' | 'warning' | 'info' | 'success';
+    message?: string;
+    details?: string[];
+    canForce?: boolean;
+  } | null>(null);
+  const [forcePlan, setForcePlan] = useState(false);
 
   useEffect(() => {
     if (isOpen && selectedDate) {
       setSelectedClientId('');
       setNotes('');
       setAutoGenerate(false);
+      setValidationResult(null);
+      setForcePlan(false);
     }
   }, [isOpen, selectedDate]);
+
+  // Valider la planification quand le client ou la date change
+  useEffect(() => {
+    if (selectedClientId && selectedDate) {
+      const client = clients.find(c => c.id === selectedClientId);
+      if (client) {
+        const validation = CalendarValidationService.validateSessionPlanning(client, selectedDate);
+        setValidationResult(validation);
+        setForcePlan(false);
+      }
+    } else {
+      setValidationResult(null);
+    }
+  }, [selectedClientId, selectedDate, clients]);
 
   if (!isOpen || !selectedDate) return null;
 
@@ -37,17 +61,45 @@ export const PlanSessionModal: React.FC<PlanSessionModalProps> = ({
     e.preventDefault();
     
     if (!selectedClientId) {
-      notificationService.warning('Veuillez sélectionner un client');
+      toast.warning('Veuillez sélectionner un client');
       return;
     }
 
     const client = clients.find(c => c.id === selectedClientId);
     if (!client) return;
 
-    // Vérifier si le client peut avoir une session ce jour
-    const validation = CalendarValidationService.canPlanSessionOnDate(client, selectedDate);
-    if (!validation.canPlan) {
-      notificationService.error(validation.reason || 'Impossible de planifier cette session');
+    // Utiliser la validation complète
+    const validation = validationResult || 
+      CalendarValidationService.validateSessionPlanning(client, selectedDate);
+
+    // Si erreur bloquante et pas de forçage, arrêter
+    if (!validation.canPlan && !forcePlan) {
+      toast.error(validation.message || 'Impossible de planifier cette session', {
+        description: validation.details?.join(' ')
+      });
+      return;
+    }
+
+    // Si avertissement et pas de forçage, demander confirmation
+    if (validation.severity === 'warning' && !forcePlan) {
+      toast.warning(validation.message || 'Attention', {
+        description: validation.details?.join(' '),
+        action: {
+          label: 'Planifier quand même',
+          onClick: () => {
+            setForcePlan(true);
+            // Relancer la soumission après un court délai
+            setTimeout(() => {
+              const form = e.target as HTMLFormElement;
+              form.requestSubmit();
+            }, 100);
+          }
+        },
+        cancel: {
+          label: 'Annuler'
+        },
+        duration: 5000
+      });
       return;
     }
 
@@ -80,10 +132,22 @@ export const PlanSessionModal: React.FC<PlanSessionModalProps> = ({
     const updatedClients = StorageService.updateClient(updatedClient);
     StorageService.saveClients(updatedClients);
     onUpdate(updatedClients);
+    
     const message = autoGenerate 
       ? `Session planifiée et ${generatedSessions.length} sessions générées automatiquement (24 semaines)`
       : 'Session planifiée avec succès';
-    notificationService.success(message);
+    
+    // Afficher un toast selon la sévérité
+    if (validation.severity === 'warning' && forcePlan) {
+      toast.warning(message, {
+        description: 'Session planifiée malgré les avertissements'
+      });
+    } else if (validation.severity === 'info') {
+      toast.info(message);
+    } else {
+      toast.success(message);
+    }
+    
     onClose();
   };
 
@@ -227,6 +291,44 @@ export const PlanSessionModal: React.FC<PlanSessionModalProps> = ({
             </div>
           )}
 
+          {/* Affichage de la validation */}
+          {validationResult && selectedClientId && (
+            <div className={`p-3 rounded-lg border ${
+              validationResult.severity === 'error' 
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : validationResult.severity === 'warning'
+                ? 'bg-orange-500/10 border-orange-500/30 text-orange-400'
+                : validationResult.severity === 'info'
+                ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                : 'bg-green-500/10 border-green-500/30 text-green-400'
+            }`}>
+              <div className="flex items-start gap-2">
+                <span className="text-lg">
+                  {validationResult.severity === 'error' ? '🚫' :
+                   validationResult.severity === 'warning' ? '⚠️' :
+                   validationResult.severity === 'info' ? 'ℹ️' : '✅'}
+                </span>
+                <div className="flex-1">
+                  <p className="text-xs font-semibold mb-1">
+                    {validationResult.message || 'Validation OK'}
+                  </p>
+                  {validationResult.details && validationResult.details.length > 0 && (
+                    <ul className="text-[10px] space-y-1 opacity-90">
+                      {validationResult.details.map((detail, idx) => (
+                        <li key={idx}>• {detail}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {validationResult.severity === 'warning' && validationResult.canForce && (
+                    <p className="text-[10px] mt-2 opacity-75">
+                      Vous pouvez planifier quand même en cliquant sur "Planifier"
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Notes */}
           <div>
             <label className="text-[9px] font-mono text-gray-500 uppercase mb-1.5 block tracking-wider">Notes (optionnel)</label>
@@ -249,9 +351,18 @@ export const PlanSessionModal: React.FC<PlanSessionModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 bg-[var(--primary-teal)]/20 text-[var(--primary-teal)] rounded-lg text-xs font-mono uppercase hover:bg-[var(--primary-teal)]/30 transition-all border border-[var(--primary-teal)]/30"
+              disabled={validationResult?.severity === 'error' && !forcePlan}
+              className={`px-5 py-2 rounded-lg text-xs font-mono uppercase transition-all border ${
+                validationResult?.severity === 'error' && !forcePlan
+                  ? 'bg-gray-800/50 text-gray-600 border-gray-800/50 cursor-not-allowed'
+                  : validationResult?.severity === 'warning' && !forcePlan
+                  ? 'bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30'
+                  : 'bg-[var(--primary-teal)]/20 text-[var(--primary-teal)] border-[var(--primary-teal)]/30 hover:bg-[var(--primary-teal)]/30'
+              }`}
             >
-              Planifier
+              {validationResult?.severity === 'warning' && !forcePlan 
+                ? 'Planifier quand même' 
+                : 'Planifier'}
             </button>
           </div>
         </form>

@@ -31,7 +31,7 @@ export const WEEKLY_SCHEME: WeekScheme[] = [
   { week: 10, phase: 'Construction Musculaire', sets: 3, reps: 10, rpe: 8, restSeconds: 90 },
   { week: 11, phase: 'Construction Musculaire', sets: 3, reps: 10, rpe: 8.5, restSeconds: 90 },
   { week: 12, phase: 'Construction Musculaire', sets: 4, reps: 6, rpe: 8.5, restSeconds: 90 },
-  
+  //Ne pas oublier de refaire une phase de bilan au bout des 12 semaines
   // Phase 3 : Force Maximale
   { week: 13, phase: 'Force Maximale', sets: 4, reps: 5, rpe: 8.5, restSeconds: 180 },
   { week: 14, phase: 'Force Maximale', sets: 4, reps: 3, rpe: 9, restSeconds: 180 },

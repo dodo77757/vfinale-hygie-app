@@ -66,6 +66,64 @@ export const filterExercisesByBodyPart = (
 };
 
 /**
+ * Filtre les exercices pour exclure ceux qui aggravent les blessures actives
+ */
+export const filterExercisesByInjuries = (
+  exercises: ExerciseDefinition[],
+  injuries: string[]
+): ExerciseDefinition[] => {
+  if (!injuries || injuries.length === 0) {
+    return exercises;
+  }
+
+  const injuryKeywords = injuries.map(i => i.toLowerCase());
+
+  return exercises.filter(exercise => {
+    const category = exercise.category.toLowerCase();
+    const targets = exercise.target.map(t => t.toLowerCase()).join(' ');
+    const description = (exercise.description || '').toLowerCase();
+    const name = exercise.nom.toLowerCase();
+
+    // Vérifie si l'exercice pourrait aggraver une blessure
+    const wouldAggravate = injuryKeywords.some(injury => {
+      // Si l'exercice cible directement la zone blessée, l'exclure
+      if (targets.includes(injury) || category.includes(injury) || name.includes(injury)) {
+        return true;
+      }
+
+      // Mappings spécifiques de blessures vers exercices à éviter
+      if (injury.includes('genou') || injury.includes('ligament')) {
+        if (category.includes('squat') || category.includes('fente') || 
+            name.includes('squat') || name.includes('fente') ||
+            targets.includes('quadriceps') && category.includes('poids')) {
+          return true;
+        }
+      }
+
+      if (injury.includes('épaule') || injury.includes('coiffe')) {
+        if (category.includes('développé') || category.includes('traction') ||
+            name.includes('développé') || name.includes('traction') ||
+            targets.includes('deltoïde') && category.includes('poids')) {
+          return true;
+        }
+      }
+
+      if (injury.includes('dos') || injury.includes('lombaire')) {
+        if (category.includes('soulevé') || category.includes('deadlift') ||
+            name.includes('soulevé') || name.includes('deadlift') ||
+            category.includes('flexion') && category.includes('poids')) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+
+    return !wouldAggravate;
+  });
+};
+
+/**
  * Priorise les exercices selon les faiblesses et blessures du client
  */
 export const prioritizeExercisesByWeaknesses = (

@@ -60,6 +60,12 @@ import { CoachCockpitView } from './src/presentation/components/dashboard/CoachC
 import { CoachClientsView } from './src/presentation/components/dashboard/CoachClientsView';
 import { CoachLibraryView } from './src/presentation/components/dashboard/CoachLibraryView';
 import { CoachSettingsView } from './src/presentation/components/dashboard/CoachSettingsView';
+import { ClientLayout, ClientView } from './src/presentation/layouts/ClientLayout';
+import { ClientDashboard } from './src/presentation/views/client/ClientDashboard';
+import { ClientCalendar } from './src/presentation/views/client/ClientCalendar';
+import { ClientStats } from './src/presentation/views/client/ClientStats';
+import { ClientProfile } from './src/presentation/views/client/ClientProfile';
+import { ClientHistory } from './src/presentation/views/client/ClientHistory';
 
 // "Déclaration globale pour l'interface de sélection de clé API (AIStudio)."
 declare global {
@@ -377,6 +383,7 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('LOGIN');
   const [userRole, setUserRole] = useState<'COACH' | 'CLIENT' | null>(null);
   const [step, setStep] = useState<AppStep>('DAILY_CHECK');
+  const [currentClientView, setCurrentClientView] = useState<ClientView>('home');
 
   // "--- ÉTATS GESTION DES DONNÉES ---"
   const [clients, setClients] = useState<UserProfile[]>([]);
@@ -645,24 +652,180 @@ const App: React.FC = () => {
     setIsTyping(true);
     
     try {
-        if (profile) {
+        if (profile && workout) {
             // "Tentative de feedback IA, mais on ne bloque pas si ça échoue"
+            let feedback = '';
             try {
-                const feedback = await aiService.generateSessionFeedback(profile, sessionData);
+                feedback = await aiService.generateSessionFeedback(profile, sessionData);
                 setAiFeedback(feedback);
             } catch (err) {
                 console.warn("Feedback IA échoué:", err);
-                setAiFeedback("Session terminée. Analyse IA indisponible (Mode hors ligne).");
+                feedback = "Session terminée. Analyse IA indisponible (Mode hors ligne).";
+                setAiFeedback(feedback);
             }
+            
+            // Sauvegarder automatiquement la session (logique intégrée)
+            let progressResult;
+            try {
+                progressResult = await aiService.analyzeGoalProgress(profile, sessionData);
+            } catch (e) {
+                console.warn("Erreur analyse IA progress:", e);
+                progressResult = {
+                    progressIncrement: 1,
+                    isOnTrack: true,
+                    adjustmentAdvice: "Session enregistrée (Mode Dégradé - Analyse IA indisponible).",
+                    currentEstimatedCompletion: Math.min((profile.activeGoal?.currentValue || 0) + 1, 100)
+                };
+            }
+            
+            const tonnage = sessionData.reduce((acc, curr) => acc + curr.volume, 0);
+            const date = new Date().toLocaleDateString('fr-FR');
+            const today = new Date().toISOString().split('T')[0];
+            
+            // Met à jour le programme si actif
+            let updatedProgram = profile?.activeProgram;
+            if (updatedProgram) {
+                updatedProgram = markSessionCompleted(updatedProgram, updatedProgram.currentWeek, updatedProgram.currentSession);
+            }
+            
+            // Calcule les streaks
+            const lastSessionDate = profile.sessionRecords && profile.sessionRecords.length > 0
+                ? new Date(profile.sessionRecords[profile.sessionRecords.length - 1].date).toISOString().split('T')[0]
+                : null;
+            
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = yesterday.toISOString().split('T')[0];
+            
+            let currentStreak = profile.currentStreak || 0;
+            let longestStreak = profile.longestStreak || 0;
+            
+            if (lastSessionDate === yesterdayStr || lastSessionDate === today) {
+                currentStreak = (profile.currentStreak || 0) + 1;
+            } else {
+                currentStreak = 1;
+            }
+            
+            if (currentStreak > longestStreak) {
+                longestStreak = currentStreak;
+                setMotivationalMessage({ type: 'streak', message: `Nouveau record de série : ${currentStreak} jours ! ⚡` });
+                setTimeout(() => setMotivationalMessage(null), 4000);
+            }
+            
+            // Vérifie les achievements
+            const tempProfile: UserProfile = {
+                ...profile,
+                sessionRecords: [...(profile.sessionRecords || []), {
+                    date: new Date().toISOString(),
+                    exercices: workout.liste_exos,
+                    tonnage,
+                    mood: progressResult.isOnTrack ? 'En progression' : 'Ajustement requis',
+                    debrief: feedback + "\n" + progressResult.adjustmentAdvice
+                }],
+                currentStreak,
+                longestStreak
+            };
+            
+            const newAchievementsUnlocked = checkAchievements(tempProfile, sessionData);
+            if (newAchievementsUnlocked.length > 0) {
+                setNewAchievements(newAchievementsUnlocked);
+            }
+            
+            // Marquer la session planifiée comme complétée
+            const todayDate = new Date();
+            todayDate.setHours(0, 0, 0, 0);
+            
+            const updatedPlannedSessions = (profile.plannedSessions || []).map(ps => {
+                const psDate = new Date(ps.date);
+                psDate.setHours(0, 0, 0, 0);
+                
+                if (psDate.getTime() === todayDate.getTime() && ps.status !== 'completed') {
+                    return {
+                        ...ps,
+                        status: 'completed' as const,
+                        completedAt: new Date().toISOString()
+                    };
+                }
+                
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                yesterday.setHours(0, 0, 0, 0);
+                if (psDate.getTime() === yesterday.getTime() && ps.status !== 'completed') {
+                    return {
+                        ...ps,
+                        status: 'completed' as const,
+                        completedAt: new Date().toISOString()
+                    };
+                }
+                
+                return ps;
+            });
+            
+            const completedSessionId = updatedPlannedSessions.find(ps => {
+                const psDate = new Date(ps.date);
+                psDate.setHours(0, 0, 0, 0);
+                return (psDate.getTime() === todayDate.getTime() || psDate.getTime() === new Date(todayDate.getTime() - 86400000).getTime()) && ps.status === 'completed';
+            })?.id;
+
+            const updatedProfile: UserProfile = {
+                ...profile,
+                historique_dates: [...(profile.historique_dates || []), date],
+                historique_volume: [...(profile.historique_volume || []), tonnage],
+                dernier_feedback_ia: progressResult.adjustmentAdvice,
+                activeGoal: profile.activeGoal ? {
+                    ...profile.activeGoal,
+                    currentValue: progressResult.currentEstimatedCompletion,
+                    history: [...(profile.activeGoal?.history || []), { date, value: progressResult.currentEstimatedCompletion }]
+                } : profile.activeGoal,
+                sessionRecords: [...(profile.sessionRecords || []), {
+                    date: new Date().toISOString(),
+                    exercices: workout.liste_exos.map(exo => ({
+                        nom: exo.nom,
+                        sets: exo.sets,
+                        reps: exo.reps,
+                        repos: exo.repos,
+                        description: exo.description || '',
+                        tempsEffortEffectif: sessionData.filter(s => s.name === exo.nom).reduce((sum, s) => sum + s.effortTime, 0),
+                        tempsReposEffectif: sessionData.filter(s => s.name === exo.nom).reduce((sum, s) => sum + s.restTime, 0),
+                    })),
+                    metrics: sessionData,
+                    tonnage,
+                    mood: progressResult.isOnTrack ? 'En progression' : 'Ajustement requis',
+                    debrief: feedback + "\n" + progressResult.adjustmentAdvice,
+                    plannedSessionId: completedSessionId
+                }],
+                plannedSessions: updatedPlannedSessions,
+                activeProgram: updatedProgram,
+                achievements: [...(profile.achievements || []), ...newAchievementsUnlocked],
+                currentStreak,
+                longestStreak,
+            };
+
+            // Sauvegarde persistante
+            const newList = StorageService.updateClient(updatedProfile);
+            setClients(newList);
+            setProfile(updatedProfile);
+            
+            // Afficher le modal d'évaluation pour les clients
+            if (userRole === 'CLIENT') {
+                setSessionRatingModalOpen(true);
+            }
+            
+            // Passer directement à FINAL (session déjà sauvegardée)
+            setStep('FINAL');
+            toast.success("Session sauvegardée avec succès !");
+        } else {
+            // Si pas de profil ou workout, juste passer au debrief
+            setStep('DEBRIEF');
         }
-        setStep('DEBRIEF');
     } catch (e) {
         console.error("Erreur critique finishSession:", e);
-        setStep('DEBRIEF'); // "Force la navigation même en cas de crash"
+        toast.error("Erreur lors de la sauvegarde de la session.");
+        setStep('DEBRIEF');
     } finally {
         setIsTyping(false);
     }
-  }, [profile, sessionData]);
+  }, [profile, workout, sessionData, setClients, setProfile, userRole, setStep, setSessionRatingModalOpen, setMotivationalMessage]);
 
   // "--- UTILS WORKOUT TIMING ---"
   
@@ -1696,7 +1859,7 @@ const App: React.FC = () => {
     } finally {
       setIsTyping(false);
     }
-  }, [profile, workout, sessionData, aiFeedback]);
+  }, [profile, workout, sessionData, aiFeedback, newAchievements, setClients, setProfile, userRole, setStep, setSessionRatingModalOpen, setMotivationalMessage]);
 
   const currentWarmupPhase = useMemo(() => {
     if (step !== 'WARMUP' || !workout) return null;
@@ -1726,6 +1889,16 @@ const App: React.FC = () => {
     return { sessionCount, maxVolume, goalProgress };
   }, [profile?.sessionRecords, profile?.historique_volume, profile?.activeGoal?.currentValue]);
 
+  // Calculer la progression du programme
+  const programProgress = useMemo(() => {
+    if (!profile?.activeProgram) return 0;
+    const program = profile.activeProgram;
+    return ((program.currentWeek - 1) * program.sessionsPerWeek + program.currentSession) / (program.duration * program.sessionsPerWeek) * 100;
+  }, [profile?.activeProgram]);
+
+  // Déterminer si on est en Focus Mode (séance active)
+  const isFocusMode = step === 'WARMUP' || step === 'WORKOUT' || step === 'STRETCH';
+
   // Calculer le temps estimé d'un workout
   const calculateEstimatedWorkoutTime = useCallback((workout: WorkoutPlan | null): number => {
     if (!workout) return 0;
@@ -1747,13 +1920,6 @@ const App: React.FC = () => {
     return Math.round((warmupTime + exerciseTime + stretchTime) / 60); // Retourne en minutes
   }, []);
 
-  // Mémoriser le calcul de progression du programme
-  const programProgress = useMemo(() => {
-    if (!profile?.activeProgram) return 0;
-    const { currentWeek, currentSession, duration, sessionsPerWeek } = profile.activeProgram;
-    if (!currentWeek || !currentSession || !duration || !sessionsPerWeek) return 0;
-    return ((currentWeek - 1) * sessionsPerWeek + currentSession) / (duration * sessionsPerWeek) * 100;
-  }, [profile?.activeProgram?.currentWeek, profile?.activeProgram?.currentSession, profile?.activeProgram?.duration, profile?.activeProgram?.sessionsPerWeek]);
 
   // Filtrage et tri des clients pour le dashboard coach
   const filteredAndSortedClients = useMemo(() => {
@@ -2094,6 +2260,8 @@ const App: React.FC = () => {
                       duration: Infinity
                     });
                   }}
+                  onCreateClientClick={() => setCreateClientModalOpen(true)}
+                  onFileSelect={handleDashboardFileSelect}
                 />
               )}
 
@@ -2249,6 +2417,56 @@ const App: React.FC = () => {
         {(() => { fetch('http://127.0.0.1:7242/ingest/2cfb4929-d2fb-4807-9ccf-fd780957ec5c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1116',message:'Rendering with profile',data:{profileId:profile?.id,profileName:profile?.nom,hasActiveProgram:!!profile?.activeProgram,viewMode,step},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{}); return null; })()}
         {/* #endregion */}
 
+        {/* CLIENT MODE: Utiliser ClientLayout avec navigation */}
+        {userRole === 'CLIENT' && !isFocusMode ? (
+          <ClientLayout
+            currentView={currentClientView}
+            onViewChange={setCurrentClientView}
+            onLogout={() => setViewMode('LOGIN')}
+            profileName={profile.nom}
+            isFocusMode={false}
+          >
+            {currentClientView === 'home' && (
+              <ClientDashboard
+                profile={profile}
+                onStartWorkout={handleStartWorkout}
+                onUpdateProfile={(updatedProfile) => {
+                  const updatedClients = StorageService.updateClient(updatedProfile);
+                  setClients(updatedClients);
+                  setProfile(updatedProfile);
+                }}
+                programProgress={programProgress}
+              />
+            )}
+            {currentClientView === 'calendar' && (
+              <ClientCalendar
+                profile={profile}
+                onStartSession={(plannedSession) => {
+                  handleStartWorkout(plannedSession, false);
+                }}
+                onUpdateProfile={(updatedProfile) => {
+                  const updatedClients = StorageService.updateClient(updatedProfile);
+                  setClients(updatedClients);
+                  setProfile(updatedProfile);
+                }}
+              />
+            )}
+            {currentClientView === 'stats' && (
+              <ClientStats profile={profile} />
+            )}
+            {currentClientView === 'profile' && (
+              <ClientProfile
+                profile={profile}
+                onUpdateProfile={(updatedProfile) => {
+                  const updatedClients = StorageService.updateClient(updatedProfile);
+                  setClients(updatedClients);
+                  setProfile(updatedProfile);
+                }}
+              />
+            )}
+          </ClientLayout>
+        ) : (
+          <>
       <header className="h-16 shrink-0 border-b border-[#BAE6FD]/30 flex items-center justify-between px-6 bg-white/70 backdrop-blur-2xl z-50 shadow-[0_1px_20px_rgba(0,0,0,0.04)]">
          <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-3">
@@ -2440,23 +2658,31 @@ const App: React.FC = () => {
                       weekEnd.setDate(weekStart.getDate() + 6);
                       weekEnd.setHours(23, 59, 59, 999);
                       
-                      const hasCompletedSessionThisWeek = profile.sessionRecords?.some(sr => {
+                      // Récupérer le nombre de séances autorisées par semaine selon le programme actif
+                      const sessionsPerWeek = profile.activeProgram?.sessionsPerWeek || 1;
+                      
+                      // Compter les sessions complétées dans la semaine (hors aujourd'hui)
+                      const completedSessionsThisWeek = (profile.sessionRecords || []).filter(sr => {
                         const srDate = new Date(sr.date);
                         srDate.setHours(0, 0, 0, 0);
                         return srDate >= weekStart && srDate <= weekEnd && srDate.getTime() !== today.getTime();
-                      });
+                      }).length;
                       
-                      const hasOtherPlannedSessionThisWeek = profile.plannedSessions?.some(ps => {
+                      // Compter les sessions planifiées dans la semaine (hors aujourd'hui, non complétées)
+                      const otherPlannedSessionsThisWeek = (profile.plannedSessions || []).filter(ps => {
                         const psDate = new Date(ps.date);
                         psDate.setHours(0, 0, 0, 0);
                         const isToday = psDate.getTime() === today.getTime();
                         const isInWeek = psDate >= weekStart && psDate <= weekEnd;
                         const isCompleted = ps.status === 'completed';
                         return !isToday && isInWeek && !isCompleted;
-                      });
+                      }).length;
                       
-                      // Afficher un avertissement si une séance est déjà complétée ou planifiée pour un autre jour
-                      const showWarning = hasCompletedSessionThisWeek || hasOtherPlannedSessionThisWeek;
+                      // Total de séances dans la semaine (hors celle d'aujourd'hui)
+                      const totalOtherSessionsThisWeek = completedSessionsThisWeek + otherPlannedSessionsThisWeek;
+                      
+                      // Afficher un avertissement seulement si le quota hebdomadaire est atteint ou dépassé
+                      const showWarning = totalOtherSessionsThisWeek >= sessionsPerWeek;
                       
                       // Cas A : Séance prévue aujourd'hui
                       if (dayInfo.type === 'session_planned' && todaySession) {
@@ -2472,9 +2698,9 @@ const App: React.FC = () => {
                                   <div className="text-left flex-1">
                                     <p className="text-sm font-semibold text-[#DC2626] mb-1">Attention</p>
                                     <p className="text-xs text-[#6B7280]">
-                                      {hasCompletedSessionThisWeek 
-                                        ? 'Vous avez déjà complété une séance cette semaine. Une seule séance par semaine est autorisée.'
-                                        : 'Vous avez une séance planifiée pour un autre jour cette semaine. Une seule séance par semaine est autorisée.'}
+                                      {totalOtherSessionsThisWeek >= sessionsPerWeek
+                                        ? `Vous avez déjà ${totalOtherSessionsThisWeek} séance${totalOtherSessionsThisWeek > 1 ? 's' : ''} cette semaine (${completedSessionsThisWeek} complétée${completedSessionsThisWeek > 1 ? 's' : ''}, ${otherPlannedSessionsThisWeek} planifiée${otherPlannedSessionsThisWeek > 1 ? 's' : ''}). Votre programme autorise ${sessionsPerWeek} séance${sessionsPerWeek > 1 ? 's' : ''} par semaine.`
+                                        : `Vous avez ${totalOtherSessionsThisWeek} autre${totalOtherSessionsThisWeek > 1 ? 's' : ''} séance${totalOtherSessionsThisWeek > 1 ? 's' : ''} cette semaine. Votre programme autorise ${sessionsPerWeek} séance${sessionsPerWeek > 1 ? 's' : ''} par semaine.`}
                                     </p>
                                   </div>
                                 </div>
@@ -3050,21 +3276,111 @@ const App: React.FC = () => {
 
         {/* STEP: DEBRIEF & FINAL */}
         {(step === 'DEBRIEF' || step === 'FINAL') && (
-            <div className="max-w-3xl mx-auto py-20 animate-fadeIn">
-               <div className="p-10 rounded-3xl bg-white border-2 border-[#BAE6FD] shadow-xl space-y-8 text-center">
-                   <h2 className="text-5xl font-bebas bg-gradient-to-r from-[#FBBF24] to-[#F59E0B] bg-clip-text text-transparent uppercase">{step === 'DEBRIEF' ? 'Analyse Terminée' : 'Mission Accomplie'}</h2>
+            <div className="max-w-4xl mx-auto py-20 animate-fadeIn">
+               <div className="p-10 rounded-3xl bg-white border-2 border-[#BAE6FD] shadow-xl space-y-8">
+                   <h2 className="text-5xl font-bebas bg-gradient-to-r from-[#FBBF24] to-[#F59E0B] bg-clip-text text-transparent uppercase text-center">{step === 'DEBRIEF' ? 'Analyse Terminée' : 'Mission Accomplie'}</h2>
+                   
+                   {/* Stats de la séance */}
+                   {sessionData.length > 0 && (
+                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                           <div className="bg-gradient-to-br from-[#E0F4F6] to-white p-4 rounded-2xl border border-[#007c89]/20 shadow-sm">
+                               <p className="text-[10px] font-semibold text-[#007c89] uppercase mb-2">Volume Total</p>
+                               <p className="text-2xl font-bebas text-[#181818]">
+                                   {Math.round(sessionData.reduce((acc, curr) => acc + curr.volume, 0))} kg
+                               </p>
+                           </div>
+                           <div className="bg-gradient-to-br from-[#FEF3C7] to-white p-4 rounded-2xl border border-[#F59E0B]/20 shadow-sm">
+                               <p className="text-[10px] font-semibold text-[#F59E0B] uppercase mb-2">Séries</p>
+                               <p className="text-2xl font-bebas text-[#181818]">
+                                   {sessionData.length}
+                               </p>
+                           </div>
+                           <div className="bg-gradient-to-br from-[#DBEAFE] to-white p-4 rounded-2xl border border-[#3B82F6]/20 shadow-sm">
+                               <p className="text-[10px] font-semibold text-[#3B82F6] uppercase mb-2">Temps Effort</p>
+                               <p className="text-2xl font-bebas text-[#181818]">
+                                   {formatTime(sessionData.reduce((acc, curr) => acc + curr.effortTime, 0))}
+                               </p>
+                           </div>
+                           <div className="bg-gradient-to-br from-[#FEE2E2] to-white p-4 rounded-2xl border border-[#EF4444]/20 shadow-sm">
+                               <p className="text-[10px] font-semibold text-[#EF4444] uppercase mb-2">Calories</p>
+                               <p className="text-2xl font-bebas text-[#181818]">
+                                   ~{Math.round(sessionData.reduce((acc, curr) => acc + curr.volume, 0) * 0.1)}
+                               </p>
+                           </div>
+                       </div>
+                   )}
+                   
+                   {/* Progression du programme */}
+                   {profile?.activeProgram && (
+                       <div className="bg-gradient-to-br from-[#007c89] to-[#006a75] p-6 rounded-2xl text-white mb-6">
+                           <div className="flex items-center justify-between">
+                               <div>
+                                   <p className="text-xs font-semibold text-white/80 uppercase mb-2">Programme Actif</p>
+                                   <p className="text-xl font-bebas">{profile.activeProgram.name}</p>
+                                   <p className="text-sm text-white/70 mt-1">
+                                       Semaine {profile.activeProgram.currentWeek} / {profile.activeProgram.duration} • 
+                                       Séance {profile.activeProgram.currentSession} / {profile.activeProgram.sessionsPerWeek}
+                                   </p>
+                               </div>
+                               <div className="text-right">
+                                   <p className="text-xs font-semibold text-white/80 uppercase mb-2">Progression</p>
+                                   <p className="text-3xl font-bebas">
+                                       {Math.round(((profile.activeProgram.currentWeek - 1) * profile.activeProgram.sessionsPerWeek + profile.activeProgram.currentSession) / (profile.activeProgram.duration * profile.activeProgram.sessionsPerWeek) * 100)}%
+                                   </p>
+                               </div>
+                           </div>
+                       </div>
+                   )}
+                   
+                   {/* Feedback IA */}
                    <div className="bg-gradient-to-br from-[#F0F9FF] to-white p-6 rounded-2xl border-2 border-[#BAE6FD]">
+                       <p className="text-xs font-semibold text-[#007c89] uppercase mb-3">💡 Feedback IA</p>
                        <p className="text-[#1F2937] font-medium leading-relaxed whitespace-pre-wrap">{aiFeedback || profile?.dernier_feedback_ia || 'Aucun feedback disponible'}</p>
                    </div>
-                   {step === 'DEBRIEF' ? (
-                       <button onClick={archiveAndExit} className="w-full py-6 bg-gradient-to-r from-[#FCD34D] to-[#FBBF24] text-[#1F2937] font-bebas text-3xl rounded-2xl uppercase hover:scale-105 transition-all shadow-xl hover:shadow-2xl">Archiver Session</button>
-                   ) : (
-                       <button onClick={() => setStep('DASHBOARD')} className="w-full py-6 bg-gradient-to-r from-[#38BDF8] to-[#7DD3FC] text-[#1F2937] font-bebas text-3xl rounded-2xl uppercase hover:from-[#0EA5E9] hover:to-[#38BDF8] transition-all shadow-xl hover:shadow-2xl">Voir Statistiques</button>
-                   )}
+                   
+                   {/* Actions */}
+                   <div className="flex flex-col gap-4">
+                       {step === 'DEBRIEF' ? (
+                           <button 
+                               onClick={archiveAndExit} 
+                               className="w-full py-6 bg-gradient-to-r from-[#FCD34D] to-[#FBBF24] text-[#1F2937] font-bebas text-3xl rounded-2xl uppercase hover:scale-105 transition-all shadow-xl hover:shadow-2xl"
+                           >
+                               Archiver Session
+                           </button>
+                       ) : (
+                           <>
+                               <button 
+                                   onClick={() => {
+                                       if (userRole === 'CLIENT') {
+                                           setViewMode('CLIENT_APP');
+                                       } else {
+                                           setStep('DASHBOARD');
+                                       }
+                                   }} 
+                                   className="w-full py-6 bg-gradient-to-r from-[#38BDF8] to-[#7DD3FC] text-[#1F2937] font-bebas text-3xl rounded-2xl uppercase hover:from-[#0EA5E9] hover:to-[#38BDF8] transition-all shadow-xl hover:shadow-2xl"
+                               >
+                                   Voir Statistiques
+                               </button>
+                               {userRole === 'CLIENT' && (
+                                   <button 
+                                       onClick={() => {
+                                           setViewMode('CLIENT_APP');
+                                           setStep('DAILY_CHECK');
+                                       }} 
+                                       className="w-full py-4 bg-white text-[#007c89] border-2 border-[#007c89] font-bebas text-xl rounded-2xl uppercase hover:bg-[#007c89] hover:text-white transition-all"
+                                   >
+                                       Retour à l'Accueil
+                                   </button>
+                               )}
+                           </>
+                       )}
+                   </div>
                </div>
             </div>
         )}
       </main>
+          </>
+        )}
 
       {/* MODALE SWAP EXERCISE */}
       {confirmSwapModal && (
@@ -3115,9 +3431,9 @@ const App: React.FC = () => {
           isProcessing={isTyping}
         />
       )}
-
           </>
-      )}
+        )}
+      </div>
 
       {/* Modal de détails de séance */}
       <SessionDetailModal
@@ -3167,7 +3483,6 @@ const App: React.FC = () => {
               localStorage.setItem('hygie_tutorial_completed', 'true');
           }}
       />
-    </div>
       <Toaster position="top-center" richColors />
     </CoachClientView>
   );

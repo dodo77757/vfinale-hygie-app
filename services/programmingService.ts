@@ -1,11 +1,8 @@
-import { UserProfile, WorkoutPlan, Exercise } from '../types';
-import * as aiService from './geminiService';
+import { UserProfile, WorkoutPlan, Exercise, PhaseExercise } from '../types';
 import { EXERCISE_DB } from '../data/exerciseLibrary';
 import { 
-  BodyPart, 
   filterExercisesByBodyPart, 
-  prioritizeExercisesByWeaknesses,
-  mapWeaknessToBodyPart 
+  filterExercisesByInjuries
 } from '../utils/exerciseCategorization';
 import { getWeekScheme, isGateKeeperWeek, evaluateGateKeeper } from '../src/domain/rules/ProgressionRules';
 
@@ -166,49 +163,8 @@ export const generateMultiWeekProgram = async (
 };
 
 /**
- * Détermine la répartition des exercices selon le split (sessionsPerWeek)
- */
-const getExerciseSplit = (
-  sessionsPerWeek: number,
-  sessionNumber: number
-): { upper: number; lower: number; core: number } => {
-  switch (sessionsPerWeek) {
-    case 1:
-      // Full Body: 1 Upper + 1 Lower + 1 Core
-      return { upper: 1, lower: 1, core: 1 };
-    
-    case 2:
-      // Half Body Hybrid
-      if (sessionNumber === 1) {
-        // Séance 1: 2 Upper + 1 Core
-        return { upper: 2, lower: 0, core: 1 };
-      } else {
-        // Séance 2: 2 Lower + 1 Core
-        return { upper: 0, lower: 2, core: 1 };
-      }
-    
-    case 3:
-      // Push/Pull/Core Focus
-      if (sessionNumber === 1) {
-        // Séance 1: 3 Upper
-        return { upper: 3, lower: 0, core: 0 };
-      } else if (sessionNumber === 2) {
-        // Séance 2: 3 Lower
-        return { upper: 0, lower: 3, core: 0 };
-      } else {
-        // Séance 3: 3 Core
-        return { upper: 0, lower: 0, core: 3 };
-      }
-    
-    default:
-      // Par défaut: Full Body
-      return { upper: 1, lower: 1, core: 1 };
-  }
-};
-
-/**
- * Génère le workout pour une séance spécifique du programme avec personnalisation avancée
- * IMPLÉMENTE LES RÈGLES DE SPLIT STRICTES
+ * Génère le workout pour une séance spécifique du programme
+ * ALGORITHME STRICT : Pas d'IA, sélection déterministe basée sur EXERCISE_DB et Math.random()
  */
 export const generateProgramWorkout = async (
   profile: UserProfile,
@@ -231,183 +187,226 @@ export const generateProgramWorkout = async (
     return session.workoutPlan;
   }
   
-  // Calcule la durée et l'intensité selon la phase
+  // ============================================
+  // ÉTAPE 1 : FILTRES D'EXERCICES (PRÉ-REQUIS)
+  // ============================================
+  const injuries = profile.blessures_actives || [];
+  
+  // Filtrer EXERCISE_DB en 3 tableaux constants (après exclusion des blessures)
+  const allUpperExos = filterExercisesByInjuries(
+    filterExercisesByBodyPart(EXERCISE_DB, 'upper'),
+    injuries
+  );
+  
+  const allLowerExos = filterExercisesByInjuries(
+    filterExercisesByBodyPart(EXERCISE_DB, 'lower'),
+    injuries
+  );
+  
+  const allCoreExos = filterExercisesByInjuries(
+    filterExercisesByBodyPart(EXERCISE_DB, 'core'),
+    injuries
+  );
+  
+  // Fonction utilitaire pour sélectionner un exercice aléatoire (sans doublon)
+  const randomExercise = (
+    exercises: typeof EXERCISE_DB,
+    excludeIds: string[] = []
+  ): typeof EXERCISE_DB[0] | null => {
+    const available = exercises.filter(ex => !excludeIds.includes(ex.id));
+    if (available.length === 0) return null;
+    const randomIndex = Math.floor(Math.random() * available.length);
+    return available[randomIndex];
+  };
+  
+  // ============================================
+  // ÉTAPE 2 : ALGORITHME DE SÉLECTION (SWITCH CASE)
+  // ============================================
+  let selectedExercises: typeof EXERCISE_DB = [];
+  
+  switch (program.sessionsPerWeek) {
+    case 1: {
+      // CAS 1 : 1 Séance / Semaine (Full Body)
+      // Toujours 3 exercices : 1 Upper + 1 Core + 1 Lower
+      const upper = randomExercise(allUpperExos);
+      const core = randomExercise(allCoreExos);
+      const lower = randomExercise(allLowerExos);
+      
+      if (upper) selectedExercises.push(upper);
+      if (core) selectedExercises.push(core);
+      if (lower) selectedExercises.push(lower);
+      
+      break;
+    }
+    
+    case 2: {
+      // CAS 2 : 2 Séances / Semaine (Half Body)
+      // Regarde currentSession (modulo 2)
+      const sessionMod = ((sessionNumber - 1) % 2) + 1;
+      
+      if (sessionMod === 1) {
+        // Séance 1 (Haut) : 2 Upper + 1 Core
+        const selectedIds: string[] = [];
+        for (let i = 0; i < 2 && allUpperExos.length > 0; i++) {
+          const exo = randomExercise(allUpperExos, selectedIds);
+          if (exo) {
+            selectedExercises.push(exo);
+            selectedIds.push(exo.id);
+          }
+        }
+        const core = randomExercise(allCoreExos, selectedIds);
+        if (core) selectedExercises.push(core);
+      } else {
+        // Séance 2 (Bas) : 2 Lower + 1 Core
+        const selectedIds: string[] = [];
+        for (let i = 0; i < 2 && allLowerExos.length > 0; i++) {
+          const exo = randomExercise(allLowerExos, selectedIds);
+          if (exo) {
+            selectedExercises.push(exo);
+            selectedIds.push(exo.id);
+          }
+        }
+        const core = randomExercise(allCoreExos, selectedIds);
+        if (core) selectedExercises.push(core);
+      }
+      
+      break;
+    }
+    
+    case 3: {
+      // CAS 3 : 3 Séances / Semaine (Push/Pull/Core)
+      // Regarde currentSession (modulo 3)
+      const sessionMod = ((sessionNumber - 1) % 3) + 1;
+      
+      const selectedIds: string[] = [];
+      
+      if (sessionMod === 1) {
+        // Séance 1 : 3 Upper
+        for (let i = 0; i < 3 && allUpperExos.length > 0; i++) {
+          const exo = randomExercise(allUpperExos, selectedIds);
+          if (exo) {
+            selectedExercises.push(exo);
+            selectedIds.push(exo.id);
+          }
+        }
+      } else if (sessionMod === 2) {
+        // Séance 2 : 3 Lower
+        for (let i = 0; i < 3 && allLowerExos.length > 0; i++) {
+          const exo = randomExercise(allLowerExos, selectedIds);
+          if (exo) {
+            selectedExercises.push(exo);
+            selectedIds.push(exo.id);
+          }
+        }
+      } else {
+        // Séance 3 : 3 Core
+        for (let i = 0; i < 3 && allCoreExos.length > 0; i++) {
+          const exo = randomExercise(allCoreExos, selectedIds);
+          if (exo) {
+            selectedExercises.push(exo);
+            selectedIds.push(exo.id);
+          }
+        }
+      }
+      
+      break;
+    }
+    
+    default: {
+      // Par défaut : Full Body (1 Upper + 1 Core + 1 Lower)
+      const upper = randomExercise(allUpperExos);
+      const core = randomExercise(allCoreExos);
+      const lower = randomExercise(allLowerExos);
+      
+      if (upper) selectedExercises.push(upper);
+      if (core) selectedExercises.push(core);
+      if (lower) selectedExercises.push(lower);
+    }
+  }
+  
+  // ============================================
+  // ÉTAPE 3 : APPLICATION DES PARAMÈTRES (WEEKLY_SCHEME)
+  // ============================================
+  const weekScheme = getWeekScheme(weekNumber);
+  
+  if (!weekScheme) {
+    throw new Error(`Schéma de progression introuvable pour la semaine ${weekNumber}`);
+  }
+  
+  // Convertit les ExerciseDefinition en Exercise avec les paramètres de progression
+  const exercises: Exercise[] = selectedExercises.map((exoDef) => {
+    return {
+      nom: exoDef.nom,
+      sets: weekScheme.sets,
+      reps: weekScheme.reps.toString(),
+      repos: weekScheme.restSeconds,
+      description: exoDef.description,
+      coach_tip: `${exoDef.coach_tip || ''} | RPE Cible: ${weekScheme.rpe}/10`.trim(),
+      poids_suggere: exoDef.poids_suggere
+    };
+  });
+  
+  // ============================================
+  // ÉTAPE 4 : CONSTRUCTION DU WORKOUT PLAN
+  // ============================================
   const phase = getProgramPhase(weekNumber);
   const weeklyFocus = getWeeklyFocus(weekNumber);
-  const duration = Math.min(45 + Math.floor((weekNumber - 1) / 4) * 5, 75); // 45-75 min selon progression
   
-  // Détermine la répartition des exercices selon le split
-  const split = getExerciseSplit(program.sessionsPerWeek, sessionNumber);
-  
-  // Récupère les faiblesses du client
-  const weaknesses = [
-    ...(profile.detected_faiblesses || []),
-    ...(profile.blessures_actives || [])
+  // Échauffement dynamique standard
+  const echauffement_dynamique: PhaseExercise[] = [
+    {
+      nom: 'Échauffement articulaire',
+      instructions: 'Mobilisation douce de toutes les articulations (chevilles, genoux, hanches, épaules, cou)',
+      duree_secondes: 300 // 5 minutes
+    }
   ];
   
-  // Filtre et priorise les exercices selon le split et les faiblesses
-  const selectedExercises: string[] = [];
-  
-  // Upper body exercises
-  if (split.upper > 0) {
-    let upperExercises = filterExercisesByBodyPart(EXERCISE_DB, 'upper');
-    
-    // Priorise selon les faiblesses upper body
-    const upperWeaknesses = weaknesses.filter(w => {
-      const bodyPart = mapWeaknessToBodyPart(w);
-      return bodyPart === 'upper';
-    });
-    
-    if (upperWeaknesses.length > 0) {
-      upperExercises = prioritizeExercisesByWeaknesses(upperExercises, upperWeaknesses, profile.blessures_actives || []);
+  // Étirements dynamiques
+  const etirements_dynamiques: PhaseExercise[] = [
+    {
+      nom: 'Étirements dynamiques',
+      instructions: 'Mouvements d\'amplitude progressive pour préparer les muscles',
+      duree_secondes: 180 // 3 minutes
     }
-    
-    // Sélectionne les exercices prioritaires
-    for (let i = 0; i < split.upper && i < upperExercises.length; i++) {
-      selectedExercises.push(upperExercises[i].nom);
+  ];
+  
+  // Étirements finaux
+  const etirements: PhaseExercise[] = [
+    {
+      nom: 'Retour au calme',
+      instructions: 'Étirements statiques légers pour favoriser la récupération',
+      duree_secondes: 300 // 5 minutes
     }
-  }
+  ];
   
-  // Lower body exercises
-  if (split.lower > 0) {
-    let lowerExercises = filterExercisesByBodyPart(EXERCISE_DB, 'lower');
-    
-    // Priorise selon les faiblesses lower body
-    const lowerWeaknesses = weaknesses.filter(w => {
-      const bodyPart = mapWeaknessToBodyPart(w);
-      return bodyPart === 'lower';
-    });
-    
-    if (lowerWeaknesses.length > 0) {
-      lowerExercises = prioritizeExercisesByWeaknesses(lowerExercises, lowerWeaknesses, profile.blessures_actives || []);
-    }
-    
-    // Sélectionne les exercices prioritaires
-    for (let i = 0; i < split.lower && i < lowerExercises.length; i++) {
-      selectedExercises.push(lowerExercises[i].nom);
-    }
-  }
+  // Calcul du temps estimé
+  const tempsExercices = exercises.reduce((sum, exo) => {
+    const tempsSerie = 60; // Estimation : 60 secondes par série
+    const tempsRepos = (exo.sets - 1) * exo.repos;
+    return sum + (exo.sets * tempsSerie) + tempsRepos;
+  }, 0);
   
-  // Core exercises
-  if (split.core > 0) {
-    let coreExercises = filterExercisesByBodyPart(EXERCISE_DB, 'core');
-    
-    // Priorise selon les faiblesses core
-    const coreWeaknesses = weaknesses.filter(w => {
-      const bodyPart = mapWeaknessToBodyPart(w);
-      return bodyPart === 'core';
-    });
-    
-    if (coreWeaknesses.length > 0) {
-      coreExercises = prioritizeExercisesByWeaknesses(coreExercises, coreWeaknesses, profile.blessures_actives || []);
-    }
-    
-    // Sélectionne les exercices prioritaires
-    for (let i = 0; i < split.core && i < coreExercises.length; i++) {
-      selectedExercises.push(coreExercises[i].nom);
-    }
-  }
+  const tempsTotal = echauffement_dynamique[0].duree_secondes +
+    etirements_dynamiques[0].duree_secondes +
+    tempsExercices +
+    etirements[0].duree_secondes;
   
-  // Crée un contexte détaillé pour l'IA avec les contraintes de split
-  const splitDescription = 
-    program.sessionsPerWeek === 1 
-      ? `SPLIT FULL BODY: ${split.upper} exercice(s) Haut du corps + ${split.lower} exercice(s) Bas du corps + ${split.core} exercice(s) Tronc/Core`
-      : program.sessionsPerWeek === 2
-      ? sessionNumber === 1
-        ? `SPLIT HALF BODY HYBRID - Séance 1: ${split.upper} exercice(s) Haut du corps + ${split.core} exercice(s) Core`
-        : `SPLIT HALF BODY HYBRID - Séance 2: ${split.lower} exercice(s) Bas du corps + ${split.core} exercice(s) Core`
-      : sessionNumber === 1
-      ? `SPLIT PUSH/PULL/CORE - Séance 1 (Push): ${split.upper} exercice(s) Haut du corps`
-      : sessionNumber === 2
-      ? `SPLIT PUSH/PULL/CORE - Séance 2 (Pull): ${split.lower} exercice(s) Bas du corps`
-      : `SPLIT PUSH/PULL/CORE - Séance 3 (Core): ${split.core} exercice(s) Tronc/Core`;
-  
-  const context = `
-    PHASE DU PROGRAMME: ${phase.phase} (Semaine ${weekNumber}/24)
-    FOCUS DE LA SÉANCE: ${session.focus}
-    FOCUS HEBDOMADAIRE: ${weeklyFocus.focus} (Intensité: ${Math.round(weeklyFocus.intensity * 100)}%)
-    INTENSITÉ CIBLE: ${Math.round(phase.intensity * 100)}%
-    
-    ${splitDescription}
-    
-    EXERCICES PRIORITAIRES SUGGÉRÉS (selon faiblesses détectées):
-    ${selectedExercises.length > 0 ? selectedExercises.map((ex, i) => `${i + 1}. ${ex}`).join('\n') : 'Aucun exercice spécifique priorisé'}
-    
-    CONTEXTE CLIENT:
-    - Objectif principal: ${profile.objectifPrincipal}
-    - Blessures actives: ${profile.blessures_actives.join(', ') || 'Aucune'}
-    - Faiblesses détectées: ${weaknesses.join(', ') || 'Aucune'}
-    - Détails pathologiques: ${profile.details_blessures || 'N/A'}
-    - Niveau: ${profile.experience}
-    - Historique: ${profile.sessionRecords.length} séances complétées
-    
-    CONSIGNES SPÉCIFIQUES:
-    ${weekNumber <= 4 ? '- Priorité absolue à la correction posturale et à la mobilité' : ''}
-    ${weekNumber > 4 && weekNumber <= 10 ? '- Développement progressif de la force de base' : ''}
-    ${weekNumber > 10 && weekNumber <= 16 ? '- Intensification avec respect des limitations' : ''}
-    ${weekNumber > 16 ? '- Optimisation pour atteindre l\'objectif final' : ''}
-    ${profile.blessures_actives.length > 0 ? '- ÉVITER les exercices qui aggravent: ' + profile.blessures_actives.join(', ') : ''}
-    - RESPECTER STRICTEMENT le split: ${splitDescription}
-    - Prioriser les exercices suggérés ci-dessus si pertinents
-  `;
-  
-  const stateOfMind = `${session.focus} - ${weeklyFocus.focus} - ${phase.phase} (S${weekNumber})`;
-  
-  const workout = await aiService.generateWorkout(profile, duration, stateOfMind, context);
-  
-  // Applique le Protocole de Progression Standard (Hygie Protocol)
-  const weekScheme = getWeekScheme(weekNumber);
-  if (weekScheme) {
-    // Applique les paramètres de progression aux exercices polyarticulaires (Haut/Bas)
-    workout.liste_exos = workout.liste_exos.map((exo: Exercise) => {
-      // Détermine si l'exercice est polyarticulaire (Haut ou Bas du corps)
-      const isPolyarticular = selectedExercises.includes(exo.nom) && 
-        (split.upper > 0 || split.lower > 0);
-      
-      if (isPolyarticular) {
-        // Applique les paramètres de progression pour les exercices polyarticulaires
-        return {
-          ...exo,
-          sets: weekScheme.sets,
-          reps: weekScheme.reps.toString(),
-          repos: weekScheme.restSeconds,
-          // Ajoute le RPE cible dans le coach_tip si présent
-          coach_tip: exo.coach_tip 
-            ? `${exo.coach_tip} | RPE Cible: ${weekScheme.rpe}/10`
-            : `RPE Cible: ${weekScheme.rpe}/10`
-        };
-      } else {
-        // Pour les exercices d'isolation ou d'échauffement, garde une logique plus légère
-        // Mais applique quand même le repos standardisé
-        return {
-          ...exo,
-          repos: weekScheme.restSeconds,
-          coach_tip: exo.coach_tip 
-            ? `${exo.coach_tip} | RPE Cible: ${weekScheme.rpe - 1}/10 (Isolation)`
-            : `RPE Cible: ${weekScheme.rpe - 1}/10 (Isolation)`
-        };
-      }
-    });
-  }
-  
-  // Vérifie la Gate Keeper (S12) si applicable
-  if (isGateKeeperWeek(weekNumber)) {
-    const gateKeeperResult = evaluateGateKeeper(
-      weekNumber,
-      profile.sessionRecords || [],
-      weekScheme?.rpe || 8.5
-    );
-    
-    // Si les conditions ne sont pas remplies, on pourrait ajuster le programme
-    // Pour l'instant, on log juste le résultat
-    console.log('Gate Keeper Evaluation:', gateKeeperResult);
-  }
+  const workout: WorkoutPlan = {
+    phrase_lancement: `Séance ${sessionNumber} - Semaine ${weekNumber} | Focus: ${weeklyFocus.focus} | Phase: ${phase.phase}`,
+    structure: 'SERIES',
+    echauffement_dynamique,
+    etirements_dynamiques,
+    liste_exos: exercises,
+    etirements,
+    temps_estime: Math.round(tempsTotal / 60) // en minutes
+  };
   
   // Met à jour le programme avec le workout généré
   session.workoutPlan = workout;
   
   return workout;
 };
+
 
 /**
  * Marque une séance comme complétée

@@ -315,7 +315,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6 pb-20 grid-responsive">
              {/* Carte Nouveau Client (Import Rapide) */}
              <div onClick={() => dashboardFileInputRef.current?.click()} className="hud-card p-8 rounded-3xl bg-gradient-to-br from-[#161616]/80 to-[#0d0d0d] border-2 border-gray-800 border-dashed hover:border-[var(--primary-teal)] cursor-pointer flex flex-col items-center justify-center gap-5 min-h-[320px] group relative overflow-hidden transition-all hover:scale-[1.02]">
-                <input type="file" ref={dashboardFileInputRef} className="hidden" accept="image/*,.pdf" onChange={handleDashboardFileSelect} />
+                <input type="file" ref={dashboardFileInputRef} className="hidden" accept="image/*,application/pdf,.pdf" onChange={handleDashboardFileSelect} />
                 <div className="text-6xl text-gray-600 group-hover:text-[var(--primary-teal)] transition-all group-hover:scale-110">⇪</div>
                 <div className="text-center">
                   <h3 className="font-bebas text-3xl text-gray-500 group-hover:text-white transition-all mb-2">IMPORT RAPIDE</h3>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { UserProfile, WorkoutPlan, PerformanceMetric, PhaseExercise } from '../types';
 import * as aiService from '../services/geminiService';
 import { StorageService } from '../services/storageService';
+import { getWeekScheme, WeekScheme } from '../src/domain/rules/ProgressionRules';
 import { 
   CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, LineChart, Line
@@ -64,6 +65,13 @@ export const Workout: React.FC<WorkoutProps> = ({
   const [aiFeedback, setAiFeedback] = useState('');
   const [confirmSwapModal, setConfirmSwapModal] = useState(false);
   const timerRef = useRef<number | null>(null);
+
+  // Récupère le schéma de progression pour la semaine actuelle
+  const weekScheme = useMemo<WeekScheme | null>(() => {
+    if (!profile?.activeProgram) return null;
+    const currentWeek = profile.activeProgram.currentWeek || 1;
+    return getWeekScheme(currentWeek);
+  }, [profile?.activeProgram?.currentWeek]);
 
   const finishSession = useCallback(async () => {
     setIsTimerRunning(false);
@@ -173,10 +181,13 @@ export const Workout: React.FC<WorkoutProps> = ({
       reps: parseInt(currentExo.reps) || 1
     }]);
 
+    // Utilise le temps de repos du weekScheme si disponible, sinon celui de l'exercice
+    const restTime = weekScheme?.restSeconds || currentExo.repos;
+
     if (currentSet < currentExo.sets) {
       setCurrentSet(prev => prev + 1);
       setIsResting(true);
-      setCountdown(currentExo.repos);
+      setCountdown(restTime);
     } else {
       if (currentExoIndex + 1 < workout.liste_exos.length) {
         const nextIdx = currentExoIndex + 1;
@@ -184,7 +195,9 @@ export const Workout: React.FC<WorkoutProps> = ({
         setCurrentSet(1);
         setIsResting(true);
         const nextExo = workout.liste_exos[nextIdx];
-        setCountdown(nextExo.repos);
+        // Utilise le temps de repos du weekScheme pour le prochain exercice aussi
+        const nextRestTime = weekScheme?.restSeconds || nextExo.repos;
+        setCountdown(nextRestTime);
         
         const suggestion = nextExo.poids_suggere?.replace(/\D/g,'') || '0';
         setCurrentKg(parseInt(suggestion) || 0);
@@ -275,6 +288,16 @@ export const Workout: React.FC<WorkoutProps> = ({
     <div className={`h-[100dvh] flex flex-col relative overflow-hidden ${
       step === 'WORKOUT' ? 'bg-[#f3efe5]' : 'bg-[#0d0d0d]'
     }`}>
+      {/* Styles CSS personnalisés pour les animations */}
+      <style>{`
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        .animate-shimmer {
+          animation: shimmer 3s infinite;
+        }
+      `}</style>
       {(step === 'WARMUP' || (step === 'WORKOUT' && false)) && <PerformanceBackground />}
       {(step === 'WARMUP' || step === 'WORKOUT' || step === 'STRETCH') && <ProgressBar current={step === 'WARMUP' ? 1 : step === 'WORKOUT' ? 2 : 3} total={3} />}
 
@@ -289,7 +312,7 @@ export const Workout: React.FC<WorkoutProps> = ({
                     <p className="text-xs font-mono text-[#6B7280]">
                         Accueil {'>'} Exercice {workout.liste_exos[currentExoIndex].nom}
                     </p>
-                </div>
+            </div>
             )}
          </div>
          <div className="flex gap-3 items-center">
@@ -399,6 +422,28 @@ export const Workout: React.FC<WorkoutProps> = ({
 
                     {/* Contenu principal - Centre */}
                     <div className="col-span-12 lg:col-span-6 flex flex-col gap-6">
+                        {/* Badge Objectif Semaine - RPE */}
+                        {weekScheme && profile?.activeProgram && (
+                            <div className="bg-gradient-to-r from-[#007c89] to-[#006a75] rounded-2xl p-4 border border-[#007c89]/30 shadow-lg">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-[10px] font-semibold text-white/80 uppercase tracking-wider mb-1">OBJECTIF SEMAINE {profile.activeProgram.currentWeek}</p>
+                                        <p className="text-2xl font-bebas text-white">
+                                            RPE {weekScheme.rpe}/10
+                                        </p>
+                                        <p className="text-xs text-white/70 font-mono mt-1">
+                                            {weekScheme.phase} • {weekScheme.sets}x{weekScheme.reps} • Repos {weekScheme.restSeconds}s
+                                        </p>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border-2 border-white/30">
+                                            <span className="text-2xl font-bebas text-white">{weekScheme.rpe}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Panneau de progression - Haut */}
                         <div className="bg-[#e0f4f6] rounded-2xl p-4 border border-[#007c89]/20 shadow-md">
                             <div className="flex items-center justify-between">
@@ -425,36 +470,122 @@ export const Workout: React.FC<WorkoutProps> = ({
                             </div>
                     </div>
                     
-                        {/* Titre de l'exercice */}
-                        <div className="bg-white rounded-2xl p-6 border border-[#007c89]/20 shadow-md">
-                            <h2 className="text-3xl md:text-4xl font-bebas text-[#181818] uppercase mb-2">
-                                {workout.liste_exos[currentExoIndex].nom}
-                            </h2>
-                            <p className="text-sm text-[#6B7280] font-mono">
-                                {workout.liste_exos[currentExoIndex].description}
-                            </p>
+                        {/* Titre de l'exercice - Design Premium */}
+                        <div className="bg-gradient-to-br from-white via-[#FAFBFC] to-white rounded-3xl p-6 border-2 border-[#007c89]/10 shadow-xl backdrop-blur-sm">
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1">
+                                    <h2 className="text-3xl md:text-5xl font-bebas text-[#181818] uppercase mb-3 leading-tight tracking-tight">
+                                        {workout.liste_exos[currentExoIndex].nom}
+                                    </h2>
+                                    <p className="text-sm text-[#6B7280] font-inter leading-relaxed max-w-2xl">
+                                        {workout.liste_exos[currentExoIndex].description}
+                                    </p>
+                                    {workout.liste_exos[currentExoIndex].coach_tip && (
+                                        <div className="mt-4 p-3 bg-[#E0F4F6]/50 rounded-xl border-l-4 border-[#007c89]">
+                                            <p className="text-xs font-semibold text-[#007c89] uppercase mb-1">💡 Conseil Coach</p>
+                                            <p className="text-xs text-[#1F2937] font-inter">{workout.liste_exos[currentExoIndex].coach_tip}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                         
-                        {/* Timer principal - Centre */}
-                        <div className={`flex-1 rounded-2xl flex flex-col items-center justify-center transition-all ${
-                            isResting 
-                                ? 'bg-[#e0f4f6] border-2 border-[#007c89]' 
-                                : 'bg-[#FBBF24] border-2 border-[#FBBF24]'
-                        } shadow-lg`}>
-                            <p className="text-xs font-semibold text-[#181818] uppercase tracking-widest mb-2">
-                                {isResting ? 'RÉCUPÉRATION' : 'TEMPS D\'EFFORT'}
-                            </p>
-                            <span className="text-7xl md:text-8xl font-bebas text-[#181818] tabular-nums mb-4">
-                                {formatTime(countdown)}
-                            </span>
-                            {isResting && (
-                                <button 
-                                    onClick={() => { setIsResting(false); setCountdown(0); }} 
-                                    className="px-6 py-2 bg-[#007c89] text-white font-bebas rounded-full text-sm hover:bg-[#006a75] transition-all"
-                                >
-                                    SKIP REPOS
-                                </button>
-                            )}
+                        {/* Zone des Timers - Séparation Effort / Récupération */}
+                        <div className="flex-1 flex flex-col gap-4">
+                            {/* Timer d'EFFORT - Grand et proéminent */}
+                            <div className={`flex-1 rounded-3xl flex flex-col items-center justify-center relative overflow-hidden transition-all duration-500 ${
+                                isResting 
+                                    ? 'bg-gradient-to-br from-[#F3F4F6] to-[#E5E7EB] border-2 border-[#D1D5DB] opacity-50 scale-95' 
+                                    : 'bg-gradient-to-br from-[#FBBF24] via-[#F59E0B] to-[#D97706] border-2 border-[#F59E0B] shadow-2xl scale-100'
+                            }`}>
+                                {/* Effet de brillance animé pour l'effort */}
+                                {!isResting && (
+                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer pointer-events-none" />
+                                )}
+                                
+                                <div className="relative z-10 flex flex-col items-center">
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className={`w-3 h-3 rounded-full ${!isResting ? 'bg-[#181818] animate-pulse' : 'bg-[#9CA3AF]'}`} />
+                                        <p className="text-xs font-bebas text-[#181818] uppercase tracking-[0.2em]">
+                                            TEMPS D'EFFORT
+                                        </p>
+                                    </div>
+                                    <span className={`text-8xl md:text-9xl font-bebas text-[#181818] tabular-nums mb-2 transition-all ${
+                                        !isResting ? 'drop-shadow-lg' : 'opacity-30'
+                                    }`}>
+                                        {formatTime(isResting ? 0 : countdown)}
+                                    </span>
+                                    {!isResting && (
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <div className="w-2 h-2 rounded-full bg-[#181818] animate-pulse" />
+                                            <p className="text-[10px] font-mono text-[#181818]/70 uppercase tracking-wider">
+                                                EN COURS
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Séparateur visuel élégant */}
+                            <div className="flex items-center gap-3 px-4">
+                                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#007c89]/30 to-transparent" />
+                                <div className="w-2 h-2 rounded-full bg-[#007c89]/20" />
+                                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-[#007c89]/30 to-transparent" />
+                            </div>
+
+                            {/* Timer de RÉCUPÉRATION - Discret mais visible */}
+                            <div className={`rounded-3xl flex flex-col items-center justify-center relative overflow-hidden transition-all duration-500 ${
+                                isResting 
+                                    ? 'bg-gradient-to-br from-[#007c89] via-[#006a75] to-[#005a66] border-2 border-[#007c89] shadow-xl scale-100 min-h-[180px]' 
+                                    : 'bg-gradient-to-br from-[#E0F4F6] to-[#B2E5E8] border-2 border-[#E0F4F6] opacity-40 scale-95 min-h-[120px]'
+                            }`}>
+                                {/* Animation de pulsation pour la récupération */}
+                                {isResting && (
+                                    <>
+                                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer pointer-events-none" />
+                                        <div className="absolute inset-0 bg-[#007c89]/20 rounded-full animate-ping opacity-75" />
+                                    </>
+                                )}
+                                
+                                <div className="relative z-10 flex flex-col items-center">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className={`w-2 h-2 rounded-full ${isResting ? 'bg-white animate-pulse' : 'bg-[#9CA3AF]'}`} />
+                                        <p className={`text-[10px] font-bebas uppercase tracking-[0.2em] ${
+                                            isResting ? 'text-white' : 'text-[#6B7280]'
+                                        }`}>
+                                            RÉCUPÉRATION
+                                        </p>
+                                    </div>
+                                    <span className={`text-5xl md:text-6xl font-bebas tabular-nums mb-3 transition-all ${
+                                        isResting 
+                                            ? 'text-white drop-shadow-lg' 
+                                            : 'text-[#9CA3AF]'
+                                    }`}>
+                                        {formatTime(isResting ? countdown : (weekScheme?.restSeconds || workout.liste_exos[currentExoIndex].repos))}
+                                    </span>
+                                    {isResting && (
+                                        <>
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                                                <p className="text-[9px] font-mono text-white/80 uppercase tracking-wider">
+                                                    REPOS ACTIF
+                                                </p>
+                                            </div>
+                                            <button 
+                                                onClick={() => { setIsResting(false); setCountdown(0); }} 
+                                                className="px-6 py-2.5 bg-white/20 backdrop-blur-sm text-white font-bebas rounded-full text-xs hover:bg-white/30 transition-all border border-white/30 hover:scale-105 uppercase tracking-wider"
+                                            >
+                                                SKIP REPOS
+                                            </button>
+                                        </>
+                                    )}
+                                    {!isResting && (
+                                        <p className="text-[9px] font-mono text-[#9CA3AF] uppercase tracking-wider">
+                                            PROCHAINE PAUSE
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
 

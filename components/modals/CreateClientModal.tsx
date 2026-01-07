@@ -63,7 +63,7 @@ export const CreateClientModal: React.FC<CreateClientModalProps> = ({
             onChange={e => setNewClientFile(e.target.files?.[0] || null)}
             className="text-xs text-gray-400 block w-full bg-black/40 border border-gray-800 rounded-lg p-3 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-bebas file:bg-[var(--primary-gold)] file:text-black hover:file:bg-amber-500"
             disabled={isProcessing}
-            accept="image/*,.pdf"
+            accept="image/*,application/pdf,.pdf"
           />
         </div>
         <div className="flex gap-4">
