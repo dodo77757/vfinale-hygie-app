@@ -1,0 +1,112 @@
+/**
+ * Styles responsive et améliorations mobile
+ */
+
+/* Variables de breakpoints */
+:root {
+  --breakpoint-xs: 320px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+}
+
+/* Améliorations pour très petits écrans */
+@media (max-width: 640px) {
+  /* Réduire les espacements */
+  .hud-card {
+    padding: 1rem !important;
+  }
+
+  /* Grille 1 colonne sur mobile */
+  .grid-responsive {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Timer adaptatif */
+  .timer-large {
+    width: 200px !important;
+    height: 200px !important;
+    font-size: 4rem !important;
+  }
+
+  /* Texte plus lisible */
+  .text-responsive {
+    font-size: 0.875rem;
+  }
+
+  /* Modales pleine largeur sur mobile */
+  .modal-mobile {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+
+  /* Header compact */
+  .header-mobile {
+    height: 60px !important;
+    padding: 0 1rem !important;
+  }
+
+  /* Boutons plus grands pour le tactile */
+  .button-touch {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Tablettes en mode paysage */
+@media (min-width: 768px) and (max-width: 1024px) and (orientation: landscape) {
+  .timer-large {
+    width: 300px;
+    height: 300px;
+  }
+
+  .workout-layout {
+    flex-direction: row;
+  }
+}
+
+/* Améliorations pour les écrans moyens */
+@media (min-width: 640px) and (max-width: 1024px) {
+  .grid-responsive {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Optimisations pour grands écrans */
+@media (min-width: 1280px) {
+  .container-max {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+}
+
+/* Amélioration de la lisibilité sur tous les écrans */
+@media (prefers-reduced-motion: no-preference) {
+  .smooth-transition {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Mode paysage mobile */
+@media (max-width: 896px) and (orientation: landscape) {
+  .header-mobile {
+    height: 50px !important;
+  }
+
+  .timer-large {
+    width: 180px !important;
+    height: 180px !important;
+    font-size: 3.5rem !important;
+  }
+}
+
+
+
+
+

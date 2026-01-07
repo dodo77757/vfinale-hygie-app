@@ -1,0 +1,294 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HYGIE - Sport. Santé. Performance.</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Palette Hygie Sport Santé - Couleurs officielles */
+            --hygie-primary: #007c89; /* Bleu principal Hygie */
+            --hygie-primary-dark: #006a75; /* Bleu foncé */
+            --hygie-primary-light: #0095a5; /* Bleu clair */
+            --hygie-primary-pale: #e0f4f6; /* Bleu très pâle */
+            
+            --hygie-cream: #f3efe5; /* Blanc cassé Hygie */
+            --hygie-cream-light: #faf9f6; /* Blanc cassé clair */
+            
+            --hygie-dark: #181818; /* Gris foncé Hygie */
+            --hygie-dark-medium: #2a2a2a; /* Gris moyen foncé */
+            --hygie-dark-light: #4a4a4a; /* Gris clair foncé */
+            
+            /* Couleurs de fond */
+            --bg-primary: #FFFFFF; /* Blanc principal */
+            --bg-secondary: var(--hygie-cream); /* Blanc cassé Hygie */
+            --bg-warm: var(--hygie-cream-light); /* Fond chaud */
+            --bg-cool: var(--hygie-primary-pale); /* Fond frais */
+            --bg-card: #FFFFFF;
+            
+            /* Couleurs de texte */
+            --text-primary: var(--hygie-dark); /* Gris foncé Hygie */
+            --text-secondary: var(--hygie-dark-light); /* Gris moyen */
+            --text-light: #6B7280; /* Gris clair */
+            --text-white: #FFFFFF;
+            
+            /* Bordures colorées */
+            --border-primary: var(--hygie-primary);
+            --border-light: rgba(0, 124, 137, 0.2);
+            --border-cream: var(--hygie-cream);
+            
+            /* Ombres colorées */
+            --shadow-primary: 0 4px 14px 0 rgba(0, 124, 137, 0.15);
+            --shadow-primary-hover: 0 8px 24px 0 rgba(0, 124, 137, 0.25);
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        body {
+            font-family: 'Montserrat', 'Roboto', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: auto;
+            margin: 0;
+            line-height: 1.6;
+            font-weight: 400;
+        }
+
+        .font-bebas { 
+            font-family: 'Montserrat', sans-serif; 
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+        
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            color: var(--hygie-dark);
+        }
+        
+        h1 { font-size: 36px; }
+        h2 { font-size: 24px; }
+        h3 { font-size: 20px; }
+        
+        p, span, div, a {
+            font-family: 'Montserrat', 'Roboto', sans-serif;
+        }
+        
+        /* Cards modernes style Hygie */
+        .hud-card {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(0, 124, 137, 0.15);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.08);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .hud-card:hover {
+            box-shadow: 0 8px 32px 0 rgba(0, 124, 137, 0.15);
+            transform: translateY(-2px);
+            border-color: rgba(0, 124, 137, 0.3);
+            background: rgba(255, 255, 255, 1);
+        }
+        
+        .hud-card-primary {
+            border-color: var(--hygie-primary);
+            background: linear-gradient(135deg, #FFFFFF 0%, var(--hygie-primary-pale) 100%);
+        }
+        
+        .hud-card-cream {
+            border-color: var(--hygie-cream);
+            background: linear-gradient(135deg, #FFFFFF 0%, var(--hygie-cream) 100%);
+        }
+        
+        /* Section avec fond coloré style Hygie */
+        .section-primary {
+            background: linear-gradient(135deg, var(--hygie-primary-pale) 0%, #FFFFFF 100%);
+            padding: 3rem 1.5rem;
+        }
+        
+        .section-cream {
+            background: linear-gradient(135deg, var(--hygie-cream) 0%, var(--hygie-cream-light) 100%);
+            padding: 3rem 1.5rem;
+        }
+        
+        /* Boutons style Hygie */
+        .btn-primary {
+            background-color: var(--hygie-primary);
+            color: #FFFFFF;
+            border: none;
+            padding: 1rem 2.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-family: 'Montserrat', sans-serif;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            box-shadow: var(--shadow-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--hygie-primary-dark);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-primary-hover);
+        }
+        
+        .btn-primary-outline {
+            background-color: transparent;
+            color: var(--hygie-primary);
+            border: 2px solid var(--hygie-primary);
+            padding: 1rem 2.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-family: 'Montserrat', sans-serif;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn-primary-outline:hover {
+            background-color: var(--hygie-primary);
+            color: #FFFFFF;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-primary);
+        }
+        
+        .btn-secondary {
+            background-color: var(--hygie-cream);
+            color: var(--hygie-dark);
+            border: 1px solid rgba(0, 124, 137, 0.2);
+            padding: 1rem 2.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-family: 'Montserrat', sans-serif;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn-secondary:hover {
+            background-color: var(--hygie-cream-light);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        /* Alias pour compatibilité */
+        .btn-blue {
+            background-color: var(--hygie-primary);
+            color: #FFFFFF;
+            border: none;
+            padding: 1rem 2.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-family: 'Montserrat', sans-serif;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            box-shadow: var(--shadow-primary);
+        }
+        
+        .btn-blue:hover {
+            background-color: var(--hygie-primary-dark);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-primary-hover);
+        }
+
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        
+        /* Custom Scrollbar - Style moderne */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: #CBD5E1 #F1F5F9;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #F1F5F9;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #CBD5E1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94A3B8;
+        }
+
+        .animate-fadeIn { 
+            animation: fadeIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateY(20px) scale(0.95); } 
+            to { opacity: 1; transform: translateY(0) scale(1); } 
+        }
+        
+        /* Animation de pulse douce */
+        @keyframes pulse-soft {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+        .animate-pulse-soft {
+            animation: pulse-soft 3s ease-in-out infinite;
+        }
+        
+        /* Animation de shimmer pour les boutons */
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+        .shimmer {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite;
+        }
+        
+        /* Logo HYGIE stylisé */
+        .logo-hygie {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 2.5rem;
+            letter-spacing: 0.1em;
+            color: var(--hygie-primary);
+            text-transform: uppercase;
+        }
+        
+        /* Tagline */
+        .tagline {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 400;
+            font-size: 0.875rem;
+            letter-spacing: 0.15em;
+            color: var(--hygie-dark-light);
+            text-transform: uppercase;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
+    "react/": "https://esm.sh/react@^18.3.1/",
+    "react": "https://esm.sh/react@^18.3.1",
+    "react-dom/": "https://esm.sh/react-dom@^18.3.1/",
+    "recharts": "https://esm.sh/recharts@^3.5.1"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+<link rel="stylesheet" href="/styles/responsive.css">
+<link rel="stylesheet" href="/styles/accessibility.css">
+</head>
+<body>
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

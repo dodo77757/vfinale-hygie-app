@@ -1,0 +1,146 @@
+/**
+ * Améliorations d'accessibilité visuelle
+ */
+
+/* Focus states améliorés */
+*:focus-visible {
+  outline: 2px solid var(--primary-teal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Amélioration du contraste pour les textes */
+.text-low-contrast {
+  color: #E0E0E0 !important; /* Minimum WCAG AA pour texte normal */
+}
+
+.text-high-contrast {
+  color: #FFFFFF !important; /* WCAG AAA pour texte important */
+}
+
+/* Tailles de police minimales pour la lisibilité */
+.text-readable {
+  font-size: 14px !important;
+  line-height: 1.5;
+}
+
+/* Indicateurs visuels pour les états */
+.button:disabled,
+input:disabled,
+textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Amélioration des contrastes */
+.bg-gray-800 {
+  background-color: #1F1F1F !important; /* Meilleur contraste */
+}
+
+.border-gray-700 {
+  border-color: #404040 !important; /* Plus visible */
+}
+
+/* Indicateurs de chargement plus visibles */
+.loading-indicator {
+  position: relative;
+}
+
+.loading-indicator::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border: 3px solid var(--primary-teal);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Amélioration des liens */
+a:focus,
+button:focus {
+  outline: 2px solid var(--primary-teal);
+  outline-offset: 2px;
+}
+
+/* Skip link pour l'accessibilité */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--primary-gold);
+  color: black;
+  padding: 8px;
+  text-decoration: none;
+  z-index: 10000;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Amélioration des ratios de contraste */
+.text-gray-500 {
+  color: #A0A0A0 !important; /* Meilleur contraste que #6B7280 */
+}
+
+.text-gray-400 {
+  color: #B0B0B0 !important; /* Meilleur contraste */
+}
+
+/* Indicateurs visuels pour les erreurs */
+.error-indicator {
+  border-left: 4px solid #EF4444;
+  padding-left: 12px;
+}
+
+.success-indicator {
+  border-left: 4px solid #10B981;
+  padding-left: 12px;
+}
+
+/* Amélioration de la lisibilité des graphiques */
+.recharts-cartesian-axis-tick-value {
+  fill: #CCCCCC !important; /* Meilleur contraste */
+  font-size: 12px !important;
+}
+
+/* Support pour prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Amélioration pour les lecteurs d'écran */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
